@@ -11,11 +11,11 @@ const BACKGROUNDS: Record<string, string> = {
   paper: '#EFEEE8',
 }
 
-/** One kept range of the recording, rendered at source time = srcStart + local frame. */
-const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: ProjectAssets; keys: CamKey[]; srcStart: number }> =
-  ({ ev, cfg, assets, keys, srcStart }) => {
+/** One kept range of the recording, rendered at source time = srcStart + local frame. `CH` is the design height. */
+const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: ProjectAssets; keys: CamKey[]; srcStart: number; CH: number }> =
+  ({ ev, cfg, assets, keys, srcStart, CH }) => {
   const frame = useCurrentFrame()
-  const { fps, height: CH } = useVideoConfig()
+  const { fps } = useVideoConfig()
   const t = srcStart + frame / fps
   const W = ev.display.width, H = ev.display.height
   const pad = Math.round(W * cfg.padding)
@@ -53,30 +53,47 @@ const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: Projec
   )
 }
 
-export const Screencast: React.FC<ScreencastProps> = ({ assets, events: ev, config: cfg }) => {
-  const { fps } = useVideoConfig()
+/**
+ * Lays the screencast out in its design size (source pixels + padding, see compositionSize) and scales that to
+ * whatever the composition is rendered at, so the exporter can pick any integer output size (720p, 1080p, 4K)
+ * without the layout maths changing.
+ */
+export const Screencast: React.FC<ScreencastProps> = (props) => {
+  const { assets, events: ev, config: cfg } = props
+  const { fps, width: VW } = useVideoConfig()
+  const design = compositionSize(props)
   const keys = useMemo(() => buildCamera(ev, cfg), [ev, cfg])
   const ranges = useMemo(() => keptRanges(ev), [ev])
   let from = 0
   return (
     <AbsoluteFill style={{ background: BACKGROUNDS[cfg.background] ?? BACKGROUNDS.indigo }}>
-      {ranges.map((r, i) => {
-        const len = Math.max(1, Math.round((r.end - r.start) * fps))
-        const seq = (
-          <Sequence key={i} from={from} durationInFrames={len}>
-            <Segment ev={ev} cfg={cfg} assets={assets} keys={keys} srcStart={r.start} />
-          </Sequence>
-        )
-        from += len
-        return seq
-      })}
+      <div style={{ position: 'absolute', left: 0, top: 0, width: design.width, height: design.height,
+                    transformOrigin: '0 0', transform: `scale(${VW / design.width})` }}>
+        {ranges.map((r, i) => {
+          const len = Math.max(1, Math.round((r.end - r.start) * fps))
+          const seq = (
+            <Sequence key={i} from={from} durationInFrames={len}>
+              <Segment ev={ev} cfg={cfg} assets={assets} keys={keys} srcStart={r.start} CH={design.height} />
+            </Sequence>
+          )
+          from += len
+          return seq
+        })}
+      </div>
     </AbsoluteFill>
   )
 }
 
-/** Composition size: the screen plus padding on every side; aspect follows the screen. */
+/** Design size: the screen plus padding on every side; aspect follows the screen. Even numbers for 4:2:0 encoders. */
 export function compositionSize(p: ScreencastProps) {
   const W = p.events.display.width, H = p.events.display.height, pad = Math.round(W * p.config.padding)
   const width = W + 2 * pad, height = H + 2 * pad
   return { width: width % 2 ? width + 1 : width, height: height % 2 ? height + 1 : height }
+}
+
+/** Output size for a target height (0 = design size): same aspect as the design, both dimensions even integers. */
+export function outputSize(design: { width: number; height: number }, outputHeight: number) {
+  const even = (n: number) => Math.max(2, Math.round(n / 2) * 2)
+  if (!outputHeight || outputHeight >= design.height) return { width: even(design.width), height: even(design.height) }
+  return { width: even(design.width * outputHeight / design.height), height: even(outputHeight) }
 }

@@ -1,0 +1,53 @@
+# Development
+
+How to run narrate from source on macOS and Windows. Product spec: `SPEC.md`. Shape of the code: `ARCHITECTURE.md`.
+
+## Layout
+- `app/` — Electron + React + Remotion. UI, control bar, preview, export. One codebase for both platforms.
+- `recorder/` — capture sidecars, one per platform, same stdin/stdout JSON-line protocol:
+  - `narrate.py` macOS (interim: ffmpeg avfoundation + PyObjC), `swift/` macOS ScreenCaptureKit (target recorder)
+  - `narrate_win.py` Windows (ffmpeg ddagrab/gdigrab + dshow + Win32 cursor log; standard library only)
+  - `tests/smoke_win.py` 5-second end-to-end check of the Windows recorder
+- `docs/` — spec, architecture, decisions, this file.
+
+The app picks the recorder by `process.platform` (`app/src/main/index.ts`). Override with `NARRATE_RECORDER=<path>`
+and the interpreter with `NARRATE_PYTHON=<path>`.
+
+## Windows
+Everything installs per-user; no administrator rights needed.
+```powershell
+winget install Gyan.FFmpeg            # ffmpeg + ffprobe (the recorder finds the WinGet install automatically)
+winget install Python.Python.3.12     # the recorder is plain Python, no packages
+winget install OpenJS.NodeJS.LTS      # or unzip https://nodejs.org/dist/latest-v24.x/ into %LOCALAPPDATA%\Programs\nodejs
+cd app; npm install; npm run dev
+```
+Open a new terminal after installing so PATH is refreshed. Recordings go to `%USERPROFILE%\Videos\Narrate\<stamp>\`.
+Windows has no screen-recording permission; the microphone can be blocked under Settings → Privacy & security →
+Microphone → "Let desktop apps access your microphone". The app shows a notice with a link when that is the case.
+
+Check the recorder without the app:
+```powershell
+python recorder\narrate_win.py --list        # displays and microphones
+python recorder\narrate_win.py --check       # {"screen": true, "mic": "authorized"|"denied"|"unknown"}
+python recorder\tests\smoke_win.py           # records the primary display for ~5 s into %TEMP%\narrate-smoke and validates it
+```
+Hardware encoders are probed in order NVENC → Quick Sync → AMF → libx264; the chosen one is written to `events.json`
+(`encoder`) along with the capture path (`capture`: `ddagrab` or `gdigrab`).
+
+## macOS
+```sh
+# Xcode command line tools provide python3; ffmpeg/ffprobe go in ~/bin (brew install ffmpeg && ln -s ...)
+pip3 install --user pyobjc-core==10.3.2 pyobjc-framework-Cocoa==10.3.2 pyobjc-framework-Quartz==10.3.2
+cd app && npm install && npm run dev
+```
+Grant Screen Recording and Microphone to the app on first run, then reopen it. Recordings go to `~/Movies/Narrate/`.
+With Xcode installed, build the ScreenCaptureKit recorder with `make` in `recorder/swift` and point `RECORDER` at it.
+
+## Export
+Export renders the same Remotion composition the editor previews (`app/src/video`). The first export downloads
+Remotion's headless Chrome (needs internet once). Output lands next to the recording as `<stamp>-narrate.mp4`.
+
+## Conventions
+- Raw media are never modified after finalisation. Edits are instructions in the project (pauses today; cuts, zooms, masks next).
+- A visible control must work end-to-end or say in plain text that it is unavailable (spec §98).
+- Record decisions in `DECISIONS.md`; keep `.claude/skills/homalabs-studio/SKILL.md` "State" current so any machine can resume.

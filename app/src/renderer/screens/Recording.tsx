@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { RecorderEvent } from '../../shared/types'
+import { keys } from '../platform'
 
 const STEP: Record<string, string> = { video: 'Saving video…', audio: 'Preparing audio…' }
 
@@ -24,7 +25,7 @@ export function Recording({ lastEvent }: { lastEvent: RecorderEvent | null }) {
   return (
     <div className="recording">
       <div className="timer"><span className={paused ? 'dot paused' : 'dot'} />{fmt(elapsed)}</div>
-      <p className="note">{paused ? 'Paused.' : 'Recording.'} Use the control bar at the bottom right, or ⌘⇧P / ⌘⇧S.</p>
+      <p className="note">{paused ? 'Paused.' : 'Recording.'} Use the control bar at the bottom right, or {keys.pause} / {keys.stop}.</p>
       <div className="row">
         {paused ? <button onClick={() => window.narrate.resumeRecording()}>Resume</button>
                 : <button onClick={() => window.narrate.pauseRecording()}>Pause</button>}

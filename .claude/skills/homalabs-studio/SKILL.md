@@ -14,23 +14,27 @@ description: Resume building the Homalabs screen studio (working name "narrate")
 - No placeholder buttons. A visible feature works end-to-end or is marked unavailable in plain text (SPEC §98).
 - Very high quality; it will be open-sourced and scaled.
 - She uses the app through its window, never the terminal. Never run test recordings of her screen without telling her first.
-- Desktop app, not web (SPEC §3). macOS first; Windows later via a separate recorder, same protocol.
+- Desktop app, not web (SPEC §3). macOS and Windows, one Electron app, one recorder sidecar per OS with the same protocol. Development currently happens on a Windows laptop; the Mac recorders are untouched.
+- She is not a terminal user: give her plain steps (open Settings, click X), never a command to run unless asked.
 - Brand tokens: ink #14140F, paper #EFEEE8, coral #FB8B73, indigo #6E71E8, violet #8B78D6, mustard #F5C36A. Flat shapes, no outline borders or offset shadows on UI chips. Calm, premium, no SaaS-dashboard look (SPEC §91–92).
 - Never delete her files; move to the Bin after an explicit yes.
 
 ## Where things are
 - `app/` Electron + React + Remotion. `npm install`, `npm run dev`. Main: `src/main` (window, control bar, Recorder driver, AssetServer, exporter). UI: `src/renderer`. Composition shared by preview and export: `src/video`. Contracts: `src/shared/types.ts`.
 - `recorder/narrate.py` interim macOS recorder (ffmpeg avfoundation + PyObjC). Needs `~/bin/ffmpeg`, `~/bin/ffprobe`, `pip install --user pyobjc-core==10.3.2 pyobjc-framework-Cocoa==10.3.2 pyobjc-framework-Quartz==10.3.2`.
-- `recorder/swift/` ScreenCaptureKit recorder, same stdout/stdin JSON protocol. Build with Xcode installed (`make` in that folder). This is the real recorder; the Python one is a stopgap.
-- Recordings: `~/Movies/Narrate/<stamp>/` → `screen.mp4` (cursor hidden), `mic.wav`, `events.json`, `cursors/`.
+- `recorder/swift/` ScreenCaptureKit recorder, same stdout/stdin JSON protocol. Build with Xcode installed (`make` in that folder). This is the real macOS recorder; the Python one is a stopgap.
+- `recorder/narrate_win.py` Windows recorder (Python stdlib + ffmpeg: ddagrab→gdigrab, dshow mic, Win32 cursor log). `recorder/tests/smoke_win.py` records 5 s and validates `events.json`. Needs `winget install Gyan.FFmpeg Python.Python.3.12`.
+- `app/scripts/export.ts` exports a recording from the CLI through the app's own pipeline (`npx tsx scripts/export.ts <dir> [height]`).
+- Recordings: macOS `~/Movies/Narrate/<stamp>/`, Windows `%USERPROFILE%\Videos\Narrate\<stamp>\` → `screen.mp4` (cursor hidden), `mic.wav`, `events.json`, `cursors/`.
+- `docs/DEVELOPMENT.md` has the full setup for both platforms.
 
-## State as of 2026-10-06
-Working: home (display, mic, countdown, permission explainer), record → floating control bar (pause/resume/stop, ⌘⇧P/⌘⇧S) → finalising states → editor with live preview (auto-zoom to click clusters, smoothed cursor, click ripple, padding, radius, 4 backgrounds, cursor size) → MP4 export (1080p/1440p/source) → Show in Finder. Pauses removed non-destructively.
-Not built yet (Phase 1 remainder): camera recording + editable overlay, system audio, crash recovery for interrupted recordings, mic level meter, window/region capture (needs Swift recorder). Then Phase 2+ per SPEC.
-Known limits of the interim recorder: control bar appears in the capture; no window/region; no system audio.
+## State as of 2026-10-06 (evening, Windows laptop)
+Working on both platforms: home (display, mic, countdown, permission notices) → record → floating control bar (pause/resume/stop, ⌘⇧P/⌘⇧S or Ctrl+Shift+P/S) → finalising states → editor with live preview (auto-zoom to click clusters, smoothed cursor, click ripple, padding, radius, 4 backgrounds, cursor size) → MP4 export (1080p/1440p/source) → Show in Finder/Explorer. Pauses removed non-destructively.
+Windows recorder verified by `smoke_win.py` on this laptop: ddagrab ≈ 52 fps at 1080p with Quick Sync, mic on the same clock (offset ≈ 0.4 s, recorded in events.json), cursor PNG correct. Encoder choice cached in `%LOCALAPPDATA%\Narrate\encoder.json`.
+Not built yet (Phase 1 remainder): camera recording + editable overlay, system audio (Windows: WASAPI loopback; macOS: ScreenCaptureKit), crash recovery UI for interrupted recordings (Windows raw files are already crash-tolerant Matroska), mic level meter, window/region capture. Then Phase 2+ per SPEC.
+Known limits of both interim recorders: control bar appears in the capture; no window/region; no system audio. Windows multi-monitor ddagrab index order is assumed, untested (one display here).
 
 ## On a new machine
-1. Install Xcode (App Store) and Node 20+. `cd app && npm install`.
-2. Build the Swift recorder (`cd recorder/swift && make`) and point `src/main/index.ts` RECORDER at it; keep the protocol identical.
-3. Run `npm run dev`, grant Screen Recording + Microphone to the app, reopen it.
-4. Continue from "Not built yet" above, updating `docs/DECISIONS.md` and this file as state changes.
+- **Windows:** `winget install Gyan.FFmpeg Python.Python.3.12 OpenJS.NodeJS.LTS` (Node needs admin; otherwise unzip node into `%LOCALAPPDATA%\Programs\nodejs`). `cd app && npm install && npm approve-scripts esbuild electron`; if Electron's binary is missing run `node node_modules/electron/install.js`. `npm run dev`.
+- **macOS:** Install Xcode (App Store) and Node 20+. `cd app && npm install`. Build the Swift recorder (`cd recorder/swift && make`) and point `src/main/index.ts` RECORDER at it; keep the protocol identical. `npm run dev`, grant Screen Recording + Microphone, reopen.
+- Continue from "Not built yet" above, updating `docs/DECISIONS.md` and this file as state changes.

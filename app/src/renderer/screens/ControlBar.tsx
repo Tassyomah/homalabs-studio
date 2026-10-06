@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { keys } from '../platform'
 
 /** The floating always-on-top bar shown while recording: timer, pause/resume, stop. */
 export function ControlBar() {
@@ -23,9 +24,9 @@ export function ControlBar() {
       <span className={state === 'paused' ? 'dot paused' : state === 'finalizing' ? 'dot off' : 'dot'} />
       <span className="time">{state === 'finalizing' ? 'Saving…' : time}</span>
       <span className="spacer" />
-      {state === 'recording' && <button className="no-drag" title="Pause (⌘⇧P)" onClick={() => window.narrate.pauseRecording()}>Pause</button>}
-      {state === 'paused' && <button className="no-drag" title="Resume (⌘⇧P)" onClick={() => window.narrate.resumeRecording()}>Resume</button>}
-      {state !== 'finalizing' && <button className="no-drag stop" title="Stop (⌘⇧S)" onClick={() => window.narrate.stopRecording()}>Stop</button>}
+      {state === 'recording' && <button className="no-drag" title={`Pause (${keys.pause})`} onClick={() => window.narrate.pauseRecording()}>Pause</button>}
+      {state === 'paused' && <button className="no-drag" title={`Resume (${keys.pause})`} onClick={() => window.narrate.resumeRecording()}>Resume</button>}
+      {state !== 'finalizing' && <button className="no-drag stop" title={`Stop (${keys.stop})`} onClick={() => window.narrate.stopRecording()}>Stop</button>}
     </div>
   )
 }

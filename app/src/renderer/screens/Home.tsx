@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Devices, Permissions, Project } from '../../shared/types'
+import { isWin, keys, machine } from '../platform'
 
 type Phase = { kind: 'idle' } | { kind: 'countdown'; n: number } | { kind: 'starting' }
 
@@ -40,6 +41,7 @@ export function Home({ projects, onOpen, onChanged, lastError }: {
   if (phase.kind === 'starting') return <div className="recording"><p className="note">Preparing recording…</p></div>
 
   const needsScreen = perms && !perms.screen
+  const micBlocked = perms?.mic === 'denied'
   return (
     <>
       <h1>Record now, talk later.</h1>
@@ -48,11 +50,22 @@ export function Home({ projects, onOpen, onChanged, lastError }: {
       {needsScreen && (
         <div className="permission">
           <b>Narrate needs permission to record the screen.</b>
-          <p>macOS asks once. Nothing is captured until you press Record, and recordings stay on this Mac.
+          <p>macOS asks once. Nothing is captured until you press Record, and recordings stay on {machine}.
              After allowing it, quit and reopen the app.</p>
           <div className="row">
             <button className="primary" onClick={() => loadPerms(true)}>Allow screen recording</button>
             <button onClick={() => window.narrate.openSettings('screen')}>Open System Settings</button>
+          </div>
+        </div>
+      )}
+      {micBlocked && (
+        <div className="permission">
+          <b>Microphone access is turned off for desktop apps.</b>
+          <p>{isWin ? 'Turn on "Let desktop apps access your microphone" in Windows Settings, then come back. You can still record without a microphone.'
+                    : 'Allow Narrate under Privacy & Security → Microphone, then reopen the app. You can still record without a microphone.'}</p>
+          <div className="row">
+            <button onClick={() => window.narrate.openSettings('mic')}>{isWin ? 'Open Windows Settings' : 'Open System Settings'}</button>
+            <button onClick={() => loadPerms()}>Check again</button>
           </div>
         </div>
       )}
@@ -66,7 +79,8 @@ export function Home({ projects, onOpen, onChanged, lastError }: {
           <select value={mic ?? ''} onChange={(e) => setMic(e.target.value === '' ? null : Number(e.target.value))}>
             <option value="">No microphone</option>
             {devices?.mics.map((m) => <option key={m.index} value={m.index}>{m.name}</option>)}
-          </select></div>
+          </select>
+          {devices && devices.mics.length === 0 && <span className="note">No microphone detected.</span>}</div>
         <div className="field"><label>Countdown</label>
           <select value={countdown} onChange={(e) => setCountdown(Number(e.target.value))}>
             <option value={0}>Immediate</option><option value={3}>3 seconds</option><option value={5}>5 seconds</option>
@@ -74,7 +88,7 @@ export function Home({ projects, onOpen, onChanged, lastError }: {
         <div className="field"><label>&nbsp;</label>
           <button className="record" disabled={!devices || !!needsScreen} onClick={begin}>Record</button></div>
       </div>
-      <p className="note">While recording: ⌘⇧P pause / resume · ⌘⇧S stop. A small control bar stays on screen.</p>
+      <p className="note">While recording: {keys.pause} pause / resume · {keys.stop} stop. A small control bar stays on screen.</p>
       {error && <p className="err">{error}</p>}
 
       <h2>Recordings</h2>
@@ -95,6 +109,12 @@ export function Home({ projects, onOpen, onChanged, lastError }: {
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 function friendly(msg: string) {
+  if (/ffmpeg is not installed|Python 3/i.test(msg)) return msg
+  if (/microphone/i.test(msg)) return msg
+  if (isWin) {
+    if (/no frames/i.test(msg)) return 'The screen capture produced no frames. Make sure ffmpeg is installed (winget install Gyan.FFmpeg) and try again.\n' + msg
+    return msg
+  }
   if (/permission/i.test(msg)) return 'macOS is blocking screen recording for this app. Allow it in System Settings → Privacy & Security → Screen Recording, then reopen Narrate.'
   if (/no frames/i.test(msg)) return 'The screen capture produced no frames. This is almost always the Screen Recording permission. Allow it and reopen Narrate.'
   return msg

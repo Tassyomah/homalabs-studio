@@ -3,6 +3,7 @@ import { Player } from '@remotion/player'
 import { Screencast, compositionSize } from '../../video/Screencast'
 import { keptDuration } from '../../video/ranges'
 import { defaultConfig, type Background, type ExportProgress, type Project, type RenderConfig, type ScreencastProps } from '../../shared/types'
+import { revealLabel } from '../platform'
 
 const FPS = 60
 const BGS: { id: Background; label: string; css: string }[] = [
@@ -54,7 +55,7 @@ export function Editor({ project }: { project: Project }) {
           {busy ? (prog!.stage === 'bundling' ? 'Preparing…' : `Rendering ${Math.round(prog!.progress * 100)}%`) : 'Export MP4'}
         </button>
         {busy && <div className="progress"><i style={{ width: `${prog!.progress * 100}%` }} /></div>}
-        {prog?.stage === 'done' && prog.output && <button onClick={() => window.narrate.reveal(prog.output!)}>Show in Finder</button>}
+        {prog?.stage === 'done' && prog.output && <button onClick={() => window.narrate.reveal(prog.output!)}>{revealLabel}</button>}
         {prog?.stage === 'error' && <p className="err">{prog.message}</p>}
         {pauses > 0 && <p className="note">{pauses} pause{pauses > 1 ? "s" : ""} removed automatically.</p>}
         <p className="note">Not yet available: trimming, camera, captions, narration takes, share links. They are on the roadmap, not hidden behind buttons.</p>
