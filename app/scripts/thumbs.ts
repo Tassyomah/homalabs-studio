@@ -18,7 +18,7 @@ const server = await AssetServer.start(resolve(dir, '..'))
 const url = (f: string) => server.url(join(dir, f))
 const cursors: Record<string, string> = {}; for (const [id, c] of Object.entries(events.cursors)) cursors[id] = url(c.file)
 const project: Project = { dir, name: basename(dir), createdAt: statSync(join(dir, 'events.json')).mtime.toISOString(), events, file, transcript: read('transcript.json'),
-  assets: { screen: url(events.files.screen), mic: events.files.mic ? url(events.files.mic) : null, camera: events.files.camera ? url(events.files.camera) : null, system: events.files.system ? url(events.files.system) : null, cursors } }
+  assets: { screen: url(events.files.screen), mic: events.files.mic ? url(events.files.mic) : null, micClean: null, camera: events.files.camera ? url(events.files.camera) : null, system: events.files.system ? url(events.files.system) : null, cursors } }
 const config = { ...defaultConfig, ...(file?.config ?? {}) }
 const times = thumbnailTimes(events, file?.cuts ?? [], file?.speeds ?? [], file?.chapters ?? [], file?.highlights ?? [], analysis)
 console.log('times (output s):', times.map((t) => t.toFixed(1)).join(', '))

@@ -116,8 +116,10 @@ export class Recorder extends EventEmitter {
   analyze(dir: string): Promise<void> { return this.job('analyze', dir) }
   /** Local speech recognition: runs `transcribe --out dir`, emits 'transcribe' progress events, resolves when transcript.json is written. */
   transcribe(dir: string): Promise<void> { return this.job('transcribe', dir) }
+  /** Cleaned voice track: runs `enhance --out dir` → mic.clean.wav. */
+  enhance(dir: string): Promise<void> { return this.job('enhance', dir) }
 
-  private job(cmd: 'analyze' | 'transcribe', dir: string): Promise<void> {
+  private job(cmd: 'analyze' | 'transcribe' | 'enhance', dir: string): Promise<void> {
     return new Promise((res, rej) => {
       const p = spawn(PYTHON, [this.script, cmd, '--out', dir], SPAWN)
       let buf = '', settled = false, err = ''

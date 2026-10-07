@@ -5,7 +5,7 @@ import { defaultConfig, type ScreencastProps } from '../shared/types'
 
 const FPS = 60
 const empty: ScreencastProps = {
-  assets: { screen: '', mic: null, camera: null, system: null, cursors: {} },
+  assets: { screen: '', mic: null, micClean: null, camera: null, system: null, cursors: {} },
   events: { version: 1, display: { id: 0, scale: 2, pointWidth: 960, pointHeight: 600, width: 1920, height: 1200 }, fps: FPS,
     tLaunch: 0, tEnd: 1, t0Video: 0, t0Mic: null, videoDuration: 1, videoFrames: FPS, cursors: {}, cursorChanges: [],
     moves: [], clicks: [], scrolls: [], micOffset: null, files: { screen: '', mic: null } },

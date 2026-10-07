@@ -114,6 +114,15 @@ export function Editor({ project }: { project: Project }) {
     return { ...analysis, proposals, summary: { ...analysis.summary, REMOVE: proposals.filter((p) => p.type === 'REMOVE').length,
       removableSeconds: Math.round(proposals.filter((p) => p.type === 'REMOVE').reduce((s, p) => s + p.end - p.start, 0) * 100) / 100 } }
   }, [analysis, transcript])
+  // Voice clean-up (spec §16): produces mic.clean.wav beside the raw track and switches the project to it.
+  const [micClean, setMicClean] = useState<string | null>(project.assets.micClean)
+  const [enhancing, setEnhancing] = useState<string>('idle')
+  const enhance = () => {
+    setEnhancing('Measuring…')
+    window.narrate.enhanceAudio(project.dir).then((p) => { setMicClean(p.assets.micClean); project.assets.micClean = p.assets.micClean; setEnhancing('idle'); set('voice', 'clean') })
+      .catch((e: Error) => { setEnhancing('idle'); alert(e.message) })
+  }
+  useEffect(() => window.narrate.onRecorderEvent((e) => { if (e.event === 'enhancing' && e.step !== 'done') setEnhancing(e.step === 'measure' ? 'Measuring…' : 'Cleaning…') }), [])
   // Content (add-on §13): copy from the transcript + chapters; thumbnails rendered from the polished master on request.
   const [thumbs, setThumbs] = useState<{ path: string; url: string }[]>([])
   const [thumbStatus, setThumbStatus] = useState<'idle' | 'running' | string>('idle')
@@ -150,7 +159,7 @@ export function Editor({ project }: { project: Project }) {
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h)
   })
 
-  const props: ScreencastProps = useMemo(() => ({ assets: project.assets, events: project.events, config, cuts, zooms, speeds, masks, transcript }), [project, config, cuts, zooms, speeds, masks, transcript])
+  const props: ScreencastProps = useMemo(() => ({ assets: { ...project.assets, micClean }, events: project.events, config, cuts, zooms, speeds, masks, transcript }), [project, micClean, config, cuts, zooms, speeds, masks, transcript])
   const size = compositionSize(props)
   const kept = useMemo(() => keptRanges(project.events, cuts, speeds), [project.events, cuts, speeds])
   const frames = Math.max(1, Math.ceil(keptDuration(project.events, cuts, speeds) * FPS))
@@ -365,6 +374,16 @@ export function Editor({ project }: { project: Project }) {
           <h2>Sound</h2>
           {project.assets.mic && <div className="control"><div className="lbl"><span>Voice</span><span>{config.micVolume === 0 ? 'muted' : Math.round(config.micVolume * 100) + '%'}</span></div>
             <input type="range" min={0} max={1.5} step={0.05} value={config.micVolume} onChange={(e) => set('micVolume', Number(e.target.value))} /></div>}
+          {project.assets.mic && <div className="control"><div className="lbl"><span>Voice clean-up</span></div>
+            {micClean ? (
+              <div className="seg">
+                <button className={config.voice === 'raw' ? 'on' : ''} onClick={() => set('voice', 'raw')}>As recorded</button>
+                <button className={config.voice === 'clean' ? 'on' : ''} onClick={() => set('voice', 'clean')}>Cleaned</button>
+              </div>
+            ) : (
+              <button disabled={enhancing !== 'idle'} onClick={enhance}>{enhancing === 'idle' ? 'Clean up voice' : enhancing}</button>
+            )}
+            <span className="note">Noise reduction and even loudness. The original recording is kept.</span></div>}
           {project.assets.system && <div className="control"><div className="lbl"><span>Computer sound</span><span>{config.systemVolume === 0 ? 'muted' : Math.round(config.systemVolume * 100) + '%'}</span></div>
             <input type="range" min={0} max={1.5} step={0.05} value={config.systemVolume} onChange={(e) => set('systemVolume', Number(e.target.value))} /></div>}
         </>)}

@@ -114,7 +114,7 @@ export interface Analysis {
   proposals: Proposal[]
   summary: Record<ProposalType, number> & { removableSeconds: number }
 }
-export interface ProjectAssets { screen: string; mic: string | null; camera: string | null; system: string | null; cursors: Record<string, string> }
+export interface ProjectAssets { screen: string; mic: string | null; micClean: string | null; camera: string | null; system: string | null; cursors: Record<string, string> }
 
 export type Background = 'indigo' | 'coral' | 'ink' | 'paper'
 export type CameraShape = 'off' | 'circle' | 'rounded'
@@ -140,11 +140,12 @@ export interface RenderConfig {
   micVolume: number     // 0..1.5, 1 = as recorded
   systemVolume: number  // 0..1.5, 0 = muted
   captions: CaptionStyle
+  voice: 'raw' | 'clean' // 'clean' uses mic.clean.wav when it exists (spec §16); the raw track is always kept
 }
 export const defaultConfig: RenderConfig = {
   aspect: 'source', zoom: 2, padding: 0.06, radius: 24, background: 'indigo', cursorScale: 1.6, outputHeight: 1080,
   cameraShape: 'circle', cameraSize: 0.2, cameraCorner: 'br', cameraMirror: true,
-  micVolume: 1, systemVolume: 0.8, captions: 'off',
+  micVolume: 1, systemVolume: 0.8, captions: 'off', voice: 'raw',
 }
 
 export type ScreencastProps = { assets: ProjectAssets; events: RecordingEvents; config: RenderConfig; cuts?: Cut[]; zooms?: ManualZoom[]; speeds?: SpeedRange[]; masks?: Mask[]; transcript?: Transcript | null; [k: string]: unknown }
@@ -161,6 +162,7 @@ export type RecorderEvent =
   | { event: 'recovering'; step: 'video' | 'audio' | 'done' }
   | { event: 'analyzing'; step: 'audio' | 'screen' | 'interaction' | 'done' }
   | { event: 'transcribing'; stage: 'installing' | 'loading' | 'transcribing' | 'done'; message?: string; done?: number; total?: number }
+  | { event: 'enhancing'; step: 'measure' | 'render' | 'done' }
   | { event: 'ready'; out: string; project: Project }
   | { event: 'error'; code: string; message: string }
 export type RecState = 'idle' | 'countdown' | 'recording' | 'paused' | 'finalizing'
@@ -205,6 +207,8 @@ export interface NarrateApi {
   analyzeProject(dir: string, force?: boolean): Promise<Analysis>
   /** Local speech recognition → transcript.json. Progress arrives via onRecorderEvent 'transcribing'. */
   transcribeProject(dir: string): Promise<Transcript>
+  /** Cleaned voice track (noise reduction + loudness) → mic.clean.wav; resolves with the reloaded project. */
+  enhanceAudio(dir: string): Promise<Project>
   /** Render one asset of the recording; `suffix` names the output file (`<stamp>-<suffix>.mp4`). */
   exportProject(dir: string, config: RenderConfig, cuts: Cut[], suffix?: string, format?: ExportFormat, extra?: MasterExtras): Promise<string>
   /** Thumbnail candidates at the given output seconds → PNG paths plus http URLs for display. */

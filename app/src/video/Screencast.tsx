@@ -96,7 +96,7 @@ const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: Projec
           <Captions transcript={transcript} t={t} style={cfg.captions} FW={F.w} FH={F.h} portrait={L.vp.crop} />
         </div>
       )}
-      {assets.mic && cfg.micVolume > 0 && <TimedAudio src={assets.mic} start={micStart} fps={fps} volume={cfg.micVolume} rate={rate} />}
+      {assets.mic && cfg.micVolume > 0 && <TimedAudio src={cfg.voice === 'clean' && assets.micClean ? assets.micClean : assets.mic} start={micStart} fps={fps} volume={cfg.micVolume} rate={rate} />}
       {assets.system && cfg.systemVolume > 0 && <TimedAudio src={assets.system} start={sysStart} fps={fps} volume={cfg.systemVolume} rate={rate} />}
     </>
   )

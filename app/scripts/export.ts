@@ -29,6 +29,7 @@ const project: Project = {
   dir, name: basename(dir), createdAt: statSync(eventsPath).mtime.toISOString(), events, file: saved,
   transcript: existsSync(transcriptFile) ? JSON.parse(readFileSync(transcriptFile, 'utf8')) : null,
   assets: { screen: url(events.files.screen), mic: events.files.mic ? url(events.files.mic) : null,
+            micClean: existsSync(join(dir, 'mic.clean.wav')) ? url('mic.clean.wav') : null,
             camera: events.files.camera ? url(events.files.camera) : null,
             system: events.files.system ? url(events.files.system) : null, cursors },
 }

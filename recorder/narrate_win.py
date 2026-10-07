@@ -9,6 +9,7 @@ Same command line and line protocol as recorder/narrate.py (macOS), so the app d
     narrate_win.py finalize --out DIR     finish a recording whose process died (crash recovery, spec §62)
     narrate_win.py meter [--mic N]        microphone level, one {"level": 0..1} line every 100 ms until stdin closes
     narrate_win.py analyze --out DIR      Smart Director signals + proposals → analysis.json (add-on spec §7–9)
+    narrate_win.py enhance --out DIR      cleaned voice track mic.clean.wav (noise reduction + loudness, spec §16); raw mic.wav untouched
     narrate_win.py transcribe --out DIR [--model base.en]   local Whisper → transcript.json (spec §43; first run installs
                                           faster-whisper into LOCALAPPDATA/Narrate/speech and downloads the model)
 
@@ -839,6 +840,36 @@ def analyze(args):
     os.replace(tmp, os.path.join(outdir, "analysis.json"))
     emit(event="ready", out=outdir, summary=analysis["summary"])
 
+# ---------------------------------------------------------------- audio enhancement (spec §16)
+def enhance(args):
+    """mic.wav → mic.clean.wav: gentle high-pass, FFT noise reduction, two-pass EBU loudness to -16 LUFS. Same length, same start."""
+    need_ffmpeg()
+    outdir = args.out
+    ev_path = os.path.join(outdir, "events.json")
+    if not outdir or not os.path.exists(ev_path):
+        emit(event="error", code="no_recording", message="No finished recording in that folder."); sys.exit(3)
+    with open(ev_path) as fh: ev = json.load(fh)
+    if not ev["files"].get("mic"):
+        emit(event="error", code="no_mic", message="This recording has no microphone track."); sys.exit(3)
+    src = os.path.join(outdir, ev["files"]["mic"]); dst = os.path.join(outdir, "mic.clean.wav"); tmp = dst + ".tmp.wav"
+    emit(event="enhancing", step="measure")
+    chain = "highpass=f=80,afftdn=nr=12:nf=-40:tn=1"
+    lines = ff_lines(["-i", src, "-af", f"{chain},loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"], timeout=1800)
+    stats = None
+    try:
+        js = "\n".join(lines); i = js.rfind("{"); stats = json.loads(js[i:js.rfind("}") + 1]) if i >= 0 else None
+    except ValueError: stats = None
+    emit(event="enhancing", step="render")
+    if stats and all(k in stats for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")):
+        ln = (f"loudnorm=I=-16:TP=-1.5:LRA=11:measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:measured_LRA={stats['input_lra']}"
+              f":measured_thresh={stats['input_thresh']}:offset={stats['target_offset']}:linear=true")
+    else: ln = "loudnorm=I=-16:TP=-1.5:LRA=11"
+    r = run([FFMPEG, "-v", "error", "-y", "-i", src, "-af", f"{chain},{ln}", "-ar", "48000", "-c:a", "pcm_s16le", tmp], timeout=1800)
+    if r.returncode != 0 or not os.path.exists(tmp):
+        emit(event="error", code="enhance_failed", message="Could not clean the voice track.\n" + r.stderr[-300:]); sys.exit(4)
+    os.replace(tmp, dst)
+    emit(event="ready", out=outdir, file="mic.clean.wav", measured=stats and {"lufs": stats.get("input_i"), "peak": stats.get("input_tp")})
+
 # ---------------------------------------------------------------- transcription (spec §43; local Whisper)
 def speech_env():
     """Private virtual environment for the speech engine, created on first use. Returns its python.exe."""
@@ -918,6 +949,7 @@ def main():
     if args.cmd == "meter": meter(args); return
     if args.cmd == "analyze": analyze(args); return
     if args.cmd == "transcribe": transcribe(args); return
+    if args.cmd == "enhance": enhance(args); return
     record(args)
 
 if __name__ == "__main__": main()

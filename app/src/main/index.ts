@@ -104,6 +104,7 @@ function loadProject(dir: string): Project | null {
   return {
     dir, name: basename(dir), createdAt: statSync(ev).mtime.toISOString(), events, file, transcript,
     assets: { screen: url(events.files.screen), mic: events.files.mic ? url(events.files.mic) : null,
+              micClean: existsSync(join(dir, 'mic.clean.wav')) ? url('mic.clean.wav') + `?v=${statSync(join(dir, 'mic.clean.wav')).mtimeMs}` : null,
               camera: events.files.camera ? url(events.files.camera) : null,
               system: events.files.system ? url(events.files.system) : null, cursors },
   }
@@ -138,6 +139,10 @@ recorder.on('analyze', (ev: RecorderEvent) => {
 recorder.on('transcribe', (ev: RecorderEvent) => {
   if (ev.event === 'transcribing') broadcast(ev)
   else if (ev.event === 'ready') broadcast({ event: 'transcribing', stage: 'done' })
+})
+recorder.on('enhance', (ev: RecorderEvent) => {
+  if (ev.event === 'enhancing') broadcast(ev)
+  else if (ev.event === 'ready') broadcast({ event: 'enhancing', step: 'done' })
 })
 
 recorder.on('event', (raw: RecorderEvent) => {
@@ -213,6 +218,13 @@ app.whenReady().then(async () => {
     const p = loadProject(dir); if (!p) throw new Error('project not found')
     const send = (prog: ExportProgress) => win?.webContents.send('export:progress', prog)
     return exportProject(APP_ROOT, p, config, cuts, send, suffix, format, join(RESOURCES, 'remotion'), extra)
+  })
+  ipcMain.handle('project:enhance', async (_e, dir: string): Promise<Project> => {
+    if (!dir.startsWith(RECORDINGS) || !existsSync(join(dir, 'events.json'))) throw new Error('not a recording folder')
+    if (!IS_WIN) throw new Error('Voice clean-up is not available on macOS yet.')
+    await recorder.enhance(dir)
+    const p = loadProject(dir); if (!p) throw new Error('project not found')
+    return p
   })
   ipcMain.handle('project:thumbnails', async (_e, dir: string, config: RenderConfig, cuts: Cut[] = [], timesOut: number[], extra?: MasterExtras) => {
     const p = loadProject(dir); if (!p) throw new Error('project not found')
