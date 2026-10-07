@@ -1,6 +1,6 @@
 import { AbsoluteFill, Audio, Img, OffthreadVideo, Sequence, useCurrentFrame, useVideoConfig } from 'remotion'
 import { useMemo } from 'react'
-import { ASPECTS, type RecordingEvents, type RenderConfig, type ScreencastProps, type ProjectAssets, type Transcript } from '../shared/types'
+import { ASPECTS, type Mask, type RecordingEvents, type RenderConfig, type ScreencastProps, type ProjectAssets, type Transcript } from '../shared/types'
 import { buildCamera, cameraAt, cursorIdAt, smoothCursor, type CamKey, type Viewport } from './motion'
 import { keptRanges } from './ranges'
 import { Captions } from './Captions'
@@ -38,8 +38,8 @@ export function layout(ev: RecordingEvents, cfg: RenderConfig): Layout {
 }
 
 /** One kept range of the recording, rendered at source time = srcStart + local frame. */
-const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: ProjectAssets; keys: CamKey[]; srcStart: number; rate: number; L: Layout; transcript: Transcript | null }> =
-  ({ ev, cfg, assets, keys, srcStart, rate, L, transcript }) => {
+const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: ProjectAssets; keys: CamKey[]; srcStart: number; rate: number; L: Layout; transcript: Transcript | null; masks: Mask[] }> =
+  ({ ev, cfg, assets, keys, srcStart, rate, L, transcript, masks }) => {
   const frame = useCurrentFrame()
   const { fps } = useVideoConfig()
   const t = srcStart + (frame / fps) * rate
@@ -66,6 +66,12 @@ const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: Projec
                     overflow: 'hidden', boxShadow: '0 40px 120px rgba(20,20,15,0.35)', background: '#14140F' }}>
         <div style={{ position: 'absolute', left: 0, top: 0, width: W, height: H, transformOrigin: '0 0', transform: `translate(${tx}px, ${ty}px) scale(${cam.scale})` }}>
           <OffthreadVideo src={assets.screen} muted startFrom={Math.round(srcStart * fps)} playbackRate={rate} style={{ width: W, height: H, display: 'block' }} />
+          {/* Privacy masks live in screen coordinates, so they follow the zoom and are part of every export (spec §49). */}
+          {masks.filter((m) => t >= m.start && t <= m.end).map((m) => (
+            <div key={m.id} style={{ position: 'absolute', left: m.x, top: m.y, width: m.w, height: m.h, borderRadius: 8,
+              background: m.kind === 'solid' ? '#14140F' : 'rgba(20,20,15,0.12)', backdropFilter: m.kind === 'blur' ? 'blur(22px) saturate(0.6)' : undefined,
+              WebkitBackdropFilter: m.kind === 'blur' ? 'blur(22px) saturate(0.6)' : undefined }} />
+          ))}
           {ripple && (
             <div style={{ position: 'absolute', left: ripple.x - 60 * rp, top: ripple.y - 60 * rp, width: 120 * rp, height: 120 * rp,
                           borderRadius: '50%', background: 'rgba(251,139,115,0.45)', opacity: 1 - rp }} />
@@ -125,7 +131,7 @@ export function cameraRect(cfg: RenderConfig, camera: { width: number; height: n
  * so the exporter can pick any integer output size without the layout maths changing.
  */
 export const Screencast: React.FC<ScreencastProps> = (props) => {
-  const { assets, events: ev, config: cfg, cuts = [], zooms = [], speeds = [], transcript = null } = props
+  const { assets, events: ev, config: cfg, cuts = [], zooms = [], speeds = [], masks = [], transcript = null } = props
   const { fps, width: VW } = useVideoConfig()
   const L = useMemo(() => layout(ev, cfg), [ev, cfg])
   const keys = useMemo(() => buildCamera(ev, cfg, L.vp, zooms), [ev, cfg, L, zooms])
@@ -138,7 +144,7 @@ export const Screencast: React.FC<ScreencastProps> = (props) => {
           const len = Math.max(1, Math.round(((r.end - r.start) / r.rate) * fps))
           const seq = (
             <Sequence key={i} from={from} durationInFrames={len}>
-              <Segment ev={ev} cfg={cfg} assets={assets} keys={keys} srcStart={r.start} rate={r.rate} L={L} transcript={transcript} />
+              <Segment ev={ev} cfg={cfg} assets={assets} keys={keys} srcStart={r.start} rate={r.rate} L={L} transcript={transcript} masks={masks} />
             </Sequence>
           )
           from += len

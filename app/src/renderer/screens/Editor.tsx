@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Player, type PlayerRef } from '@remotion/player'
 import { Screencast, compositionSize } from '../../video/Screencast'
 import { keptDuration, keptRanges, outToSrc, srcToOut } from '../../video/ranges'
-import { ASPECTS, ASSET_LABEL, defaultConfig, type Analysis, type Background, type CameraCorner, type CameraShape, type CaptionStyle, type Chapter, type Cut, type DerivedAsset, type ExportProgress, type ManualZoom, type Project, type Proposal, type RenderConfig, type ScreencastProps, type SpeedRange, type Transcript, type TranscriptSegment } from '../../shared/types'
+import { ASPECTS, ASSET_LABEL, defaultConfig, type Analysis, type Background, type CameraCorner, type CameraShape, type CaptionStyle, type Chapter, type Cut, type DerivedAsset, type ExportProgress, type ManualZoom, type Mask, type Project, type Proposal, type RenderConfig, type ScreencastProps, type SpeedRange, type Transcript, type TranscriptSegment } from '../../shared/types'
 import { smoothCursor } from '../../video/motion'
 import { revealLabel } from '../platform'
 import { Timeline, fmt } from './Timeline'
@@ -22,17 +22,17 @@ const BGS: { id: Background; label: string; css: string }[] = [
 ]
 
 /** Everything the user can change; one snapshot per undo step. */
-type Edits = { config: RenderConfig; cuts: Cut[]; assets: DerivedAsset[]; zooms: ManualZoom[]; speeds: SpeedRange[]; chapters: Chapter[]; highlights: [number, number][]; director: DirectorState }
+type Edits = { config: RenderConfig; cuts: Cut[]; assets: DerivedAsset[]; zooms: ManualZoom[]; speeds: SpeedRange[]; masks: Mask[]; chapters: Chapter[]; highlights: [number, number][]; director: DirectorState }
 
 export function Editor({ project }: { project: Project }) {
   // Saved edits win; defaults fill in settings that did not exist when the project was last saved.
   const [edits, setEdits] = useState<Edits>(() => ({
     config: { ...defaultConfig, ...(project.file?.config ?? {}) }, cuts: project.file?.cuts ?? [],
-    assets: project.file?.assets ?? [], zooms: project.file?.zooms ?? [], speeds: project.file?.speeds ?? [],
+    assets: project.file?.assets ?? [], zooms: project.file?.zooms ?? [], speeds: project.file?.speeds ?? [], masks: project.file?.masks ?? [],
     chapters: project.file?.chapters ?? [], highlights: project.file?.highlights ?? [],
     director: project.file?.director ?? { accepted: [], rejected: [] },
   }))
-  const { assets, zooms, speeds, chapters, highlights, director } = edits
+  const { assets, zooms, speeds, masks, chapters, highlights, director } = edits
   // Which asset is being edited: the master, or one derivative (add-on §5: derivatives stay editable).
   const [selected, setSelected] = useState<string>('master')
   const asset = assets.find((a) => a.id === selected) ?? null
@@ -78,11 +78,11 @@ export function Editor({ project }: { project: Project }) {
   useEffect(() => {
     if (!dirty.current) return
     const t = setTimeout(() => {
-      window.narrate.saveProject(project.dir, { version: 1, config: edits.config, cuts: edits.cuts, assets, zooms, speeds, chapters, highlights, director, savedAt: new Date().toISOString() })
+      window.narrate.saveProject(project.dir, { version: 1, config: edits.config, cuts: edits.cuts, assets, zooms, speeds, masks, chapters, highlights, director, savedAt: new Date().toISOString() })
         .catch((e) => console.warn('autosave failed', e))
     }, 400)
     return () => clearTimeout(t)
-  }, [edits, assets, zooms, speeds, chapters, highlights, director, project.dir])
+  }, [edits, assets, zooms, speeds, masks, chapters, highlights, director, project.dir])
 
   // Smart Director (add-on §7–9): analyse on first open (cached in analysis.json afterwards), show progress meanwhile.
   const runAnalysis = useCallback((force = false) => {
@@ -138,7 +138,7 @@ export function Editor({ project }: { project: Project }) {
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h)
   })
 
-  const props: ScreencastProps = useMemo(() => ({ assets: project.assets, events: project.events, config, cuts, zooms, speeds, transcript }), [project, config, cuts, zooms, speeds, transcript])
+  const props: ScreencastProps = useMemo(() => ({ assets: project.assets, events: project.events, config, cuts, zooms, speeds, masks, transcript }), [project, config, cuts, zooms, speeds, masks, transcript])
   const size = compositionSize(props)
   const kept = useMemo(() => keptRanges(project.events, cuts, speeds), [project.events, cuts, speeds])
   const frames = Math.max(1, Math.ceil(keptDuration(project.events, cuts, speeds) * FPS))
@@ -181,6 +181,16 @@ export function Editor({ project }: { project: Project }) {
     setPendingSpeed(null)
   }
   const removeSpeed = (i: number) => apply((e) => ({ ...e, speeds: e.speeds.filter((_, k) => k !== i) }))
+  // Privacy mask (spec §49): a blurred box around the cursor at the playhead for 5 s; position and size are adjusted below.
+  const W = project.events.display.width, H = project.events.display.height
+  const maskHere = () => {
+    const pos = smoothCursor(project.events, playheadSrc) ?? [W / 2, H / 2]
+    const w = Math.round(W * 0.2), h = Math.round(H * 0.1)
+    apply((e) => ({ ...e, masks: [...e.masks, { id: `m-${Math.random().toString(36).slice(2, 8)}`, start: playheadSrc, end: Math.min(dur, playheadSrc + 5),
+      x: Math.round(Math.max(0, Math.min(W - w, pos[0] - w / 2))), y: Math.round(Math.max(0, Math.min(H - h, pos[1] - h / 2))), w, h, kind: 'blur' }] }))
+  }
+  const editMask = (id: string, patch: Partial<Mask>) => apply((e) => ({ ...e, masks: e.masks.map((m) => m.id === id ? { ...m, ...patch } : m) }))
+  const removeMask = (id: string) => apply((e) => ({ ...e, masks: e.masks.filter((m) => m.id !== id) }))
   const setSpeedRateAt = (i: number, rate: number) => apply((e) => ({ ...e, speeds: e.speeds.map((s, k) => k === i ? { ...s, rate } : s) }))
 
   // Asset Studio (add-on §13): generate the standard set from the analysis; each is master + its own cuts + overrides.
@@ -188,7 +198,7 @@ export function Editor({ project }: { project: Project }) {
     ev: project.events, analysis, masterCuts: e.cuts, chapters: e.chapters, highlights: e.highlights, masterSavedAt: project.file?.savedAt ?? null }) }))
   const removeAsset = (id: string) => { if (selected === id) setSelected('master'); apply((e) => ({ ...e, assets: e.assets.filter((a) => a.id !== id) })) }
   const assetDuration = (a: DerivedAsset | null) => keptDuration(project.events, a ? a.cuts : edits.cuts, speeds)
-  const exportOne = (a: DerivedAsset | null) => window.narrate.exportProject(project.dir, a ? { ...edits.config, ...a.config } : edits.config, a ? a.cuts : edits.cuts, a ? a.name : 'master', format, { zooms, speeds })
+  const exportOne = (a: DerivedAsset | null) => window.narrate.exportProject(project.dir, a ? { ...edits.config, ...a.config } : edits.config, a ? a.cuts : edits.cuts, a ? a.name : 'master', format, { zooms, speeds, masks })
   const exportAll = async () => {
     const list: (DerivedAsset | null)[] = [null, ...assets]
     setQueue({ total: list.length, done: 0, current: 'Master' })
@@ -229,6 +239,7 @@ export function Editor({ project }: { project: Project }) {
           {pendingCut !== null && <button onClick={() => setPendingCut(null)}>Cancel</button>}
           {!asset && <>
             <button onClick={zoomHere} title="Zoom in on the cursor at the playhead for 2.5 s">Zoom here</button>
+            <button onClick={maskHere} title="Blur a box around the cursor at the playhead for 5 s; adjust it below">Mask here</button>
             <button className={pendingSpeed !== null ? 'primary' : ''} onClick={speedHere}>{pendingSpeed === null ? 'Speed from here…' : `…to here at ${speedRate}×`}</button>
             {pendingSpeed !== null && <>
               <select value={speedRate} onChange={(e) => setSpeedRate(Number(e.target.value))} style={{ minWidth: 0, padding: '6px 8px' }}>
@@ -243,13 +254,13 @@ export function Editor({ project }: { project: Project }) {
           <button onClick={undo} disabled={history.current.past.length === 0} title="Undo (Ctrl+Z)">Undo</button>
           <button onClick={redo} disabled={history.current.future.length === 0} title="Redo (Ctrl+Y)">Redo</button>
         </div>
-        <Timeline ev={project.events} cuts={cuts} chapters={asset ? [] : chapters} highlights={asset ? [] : highlights} zooms={zooms} speeds={speeds}
+        <Timeline ev={project.events} cuts={cuts} chapters={asset ? [] : chapters} highlights={asset ? [] : highlights} zooms={zooms} speeds={speeds} masks={masks}
           playhead={playheadSrc} pendingCut={pendingCut ?? pendingSpeed} onSeek={seekSrc} />
         {!asset && <Director analysis={analysisWithFillers} status={dstatus} state={director} onAccept={onAccept} onReject={onReject} onAcceptAll={onAcceptAll}
           onDismiss={onDismiss} onSeek={seekSrc} onRerun={() => runAnalysis(true)} />}
         {!asset && <TranscriptPanel transcript={transcript} status={tstatus} cuts={cuts} hasMic={!!project.assets.mic} playhead={playheadSrc}
           onCreate={transcribe} onSeek={seekSrc} onRemove={removeSentence} onRestore={restoreSentence} />}
-        {(sortedCuts.length > 0 || (!asset && (zooms.length > 0 || speeds.length > 0))) && (
+        {(sortedCuts.length > 0 || (!asset && (zooms.length > 0 || speeds.length > 0 || masks.length > 0))) && (
           <div className="cuts">
             {sortedCuts.map(({ c, i }) => (
               <div key={'c' + i}><span>Removed {fmt(c[0])} – {fmt(c[1])}</span><button onClick={() => restore(i)}>Restore</button></div>
@@ -259,6 +270,16 @@ export function Editor({ project }: { project: Project }) {
                 {' '}<label className="mini">level <input type="range" min={1.2} max={4} step={0.1} value={z.level} onChange={(e) => editZoom(z.id, { level: Number(e.target.value) })} /> {z.level.toFixed(1)}×</label>
                 {' '}<label className="mini">hold <input type="range" min={0.5} max={10} step={0.5} value={z.duration} onChange={(e) => editZoom(z.id, { duration: Number(e.target.value) })} /> {z.duration.toFixed(1)}s</label></span>
                 <button onClick={() => removeZoom(z.id)}>Remove</button></div>
+            ))}
+            {!asset && masks.map((m) => (
+              <div key={m.id}><span>Mask <button className="when" onClick={() => seekSrc(m.start)}>{fmt(m.start)}</button> – {fmt(m.end)}
+                {' '}<select value={m.kind} onChange={(e) => editMask(m.id, { kind: e.target.value as Mask['kind'] })} style={{ minWidth: 0, padding: '4px 8px' }}><option value="blur">Blur</option><option value="solid">Solid</option></select>
+                {' '}<label className="mini">x <input type="range" min={0} max={W - m.w} step={4} value={m.x} onChange={(e) => editMask(m.id, { x: Number(e.target.value) })} /></label>
+                {' '}<label className="mini">y <input type="range" min={0} max={H - m.h} step={4} value={m.y} onChange={(e) => editMask(m.id, { y: Number(e.target.value) })} /></label>
+                {' '}<label className="mini">width <input type="range" min={40} max={W} step={4} value={m.w} onChange={(e) => editMask(m.id, { w: Number(e.target.value), x: Math.min(m.x, W - Number(e.target.value)) })} /></label>
+                {' '}<label className="mini">height <input type="range" min={24} max={H} step={4} value={m.h} onChange={(e) => editMask(m.id, { h: Number(e.target.value), y: Math.min(m.y, H - Number(e.target.value)) })} /></label>
+                {' '}<label className="mini">until <input type="range" min={m.start + 0.5} max={dur} step={0.5} value={m.end} onChange={(e) => editMask(m.id, { end: Number(e.target.value) })} /> {fmt(m.end)}</label></span>
+                <button onClick={() => removeMask(m.id)}>Remove</button></div>
             ))}
             {!asset && speeds.map((s, i) => (
               <div key={'s' + i}><span>Speed <button className="when" onClick={() => seekSrc(s.start)}>{fmt(s.start)}</button> – {fmt(s.end)}

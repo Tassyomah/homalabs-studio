@@ -57,6 +57,8 @@ export interface Chapter { t: number; title: string }
 export interface ManualZoom { id: string; t: number; duration: number; x: number; y: number; level: number }
 /** Playback speed for a stretch of the recording (spec §40); 1 = normal. Source seconds. */
 export interface SpeedRange { start: number; end: number; rate: number }
+/** Privacy mask (spec §49): a rectangle in screen pixels, blurred or painted over, from `start` to `end` (source seconds). */
+export interface Mask { id: string; start: number; end: number; x: number; y: number; w: number; h: number; kind: 'blur' | 'solid' }
 
 /**
  * A derivative of the master (add-on §4–5): the same recording with its own removed stretches and a few config
@@ -83,6 +85,7 @@ export interface ProjectFile {
   assets?: DerivedAsset[]
   zooms?: ManualZoom[]
   speeds?: SpeedRange[]
+  masks?: Mask[]
   chapters?: Chapter[]
   /** Stand-alone moments (source seconds) the user kept from the Smart Director; future clip sources (add-on §19). */
   highlights?: [number, number][]
@@ -144,7 +147,9 @@ export const defaultConfig: RenderConfig = {
   micVolume: 1, systemVolume: 0.8, captions: 'off',
 }
 
-export type ScreencastProps = { assets: ProjectAssets; events: RecordingEvents; config: RenderConfig; cuts?: Cut[]; zooms?: ManualZoom[]; speeds?: SpeedRange[]; transcript?: Transcript | null; [k: string]: unknown }
+export type ScreencastProps = { assets: ProjectAssets; events: RecordingEvents; config: RenderConfig; cuts?: Cut[]; zooms?: ManualZoom[]; speeds?: SpeedRange[]; masks?: Mask[]; transcript?: Transcript | null; [k: string]: unknown }
+/** Master-level instructions every derivative inherits. */
+export interface MasterExtras { zooms: ManualZoom[]; speeds: SpeedRange[]; masks: Mask[] }
 
 export type MicPermission = 'authorized' | 'denied' | 'restricted' | 'notDetermined' | 'unknown'
 export interface Permissions { screen: boolean; mic: MicPermission }
@@ -201,7 +206,7 @@ export interface NarrateApi {
   /** Local speech recognition → transcript.json. Progress arrives via onRecorderEvent 'transcribing'. */
   transcribeProject(dir: string): Promise<Transcript>
   /** Render one asset of the recording; `suffix` names the output file (`<stamp>-<suffix>.mp4`). */
-  exportProject(dir: string, config: RenderConfig, cuts: Cut[], suffix?: string, format?: ExportFormat, extra?: { zooms: ManualZoom[]; speeds: SpeedRange[] }): Promise<string>
+  exportProject(dir: string, config: RenderConfig, cuts: Cut[], suffix?: string, format?: ExportFormat, extra?: MasterExtras): Promise<string>
   onExportProgress(cb: (p: ExportProgress) => void): () => void
   reveal(path: string): Promise<void>
   trashProject(dir: string): Promise<void>

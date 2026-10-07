@@ -56,9 +56,9 @@ select { padding: 9px 12px; border-radius: 10px; border: 1px solid var(--ink-10)
 .work { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-width: 0; overflow: auto; padding-right: 2px; }
 .stage { flex: 0 0 auto; height: min(52vh, 620px); background: var(--ink-5); border-radius: var(--radius); display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.tools button { padding: 8px 14px; font-size: 13px; }
+.tools button { padding: 7px 12px; font-size: 13px; }
 .tools .spacer { flex: 1; }
-.tools .hint { font-size: 13px; color: var(--ink-60); }
+.tools .hint { font-size: 12px; color: var(--ink-60); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
 
 /* timeline: source time; kept = indigo, pause = ink, cut = coral, pending selection = mustard */
 .timeline { display: flex; flex-direction: column; gap: 6px; }
@@ -103,6 +103,7 @@ select { padding: 9px 12px; border-radius: 10px; border: 1px solid var(--ink-10)
 .proposal.speed .when { border-left: 4px solid var(--violet); }
 .track .speed { position: absolute; bottom: 0; height: 8px; background: repeating-linear-gradient(135deg, var(--violet) 0 6px, transparent 6px 12px); }
 .track .zoom { position: absolute; top: 0; height: 8px; background: var(--indigo); border-radius: 0 0 4px 4px; }
+.track .mask { position: absolute; top: 10px; height: 6px; background: var(--ink); opacity: .7; border-radius: 3px; }
 .track .chapter { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--ink); opacity: .9; }
 .track .chapter::after { content: ''; position: absolute; top: 0; left: 0; border: 5px solid transparent; border-top-color: var(--ink); border-left-color: var(--ink); }
 .track .highlight { position: absolute; top: 0; height: 6px; background: var(--mustard); }
