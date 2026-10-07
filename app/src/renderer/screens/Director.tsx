@@ -11,8 +11,9 @@ const LABEL: Record<ProposalType, (n: number, a: Analysis) => string> = {
   ZOOM: (n) => `${n} automatic zoom${n === 1 ? '' : 's'}`,
   CHAPTER: (n) => `${n} chapter boundar${n === 1 ? 'y' : 'ies'}`,
   HIGHLIGHT: (n) => `${n} highlight moment${n === 1 ? '' : 's'}`,
+  SPEED: (n) => `${n} stretch${n === 1 ? '' : 'es'} to speed up`,
 }
-const VERB: Record<ProposalType, string> = { REMOVE: 'Remove', ZOOM: 'Zoom', CHAPTER: 'Chapter at', HIGHLIGHT: 'Highlight' }
+const VERB: Record<ProposalType, string> = { REMOVE: 'Remove', ZOOM: 'Zoom', CHAPTER: 'Chapter at', HIGHLIGHT: 'Highlight', SPEED: 'Speed up' }
 
 /**
  * Smart Director (add-on §7–9): the analysis as a short summary with Apply all / Review / Dismiss, and on Review
@@ -30,7 +31,7 @@ export function Director({ analysis, status, state, onAccept, onReject, onAccept
   if (!analysis) return null
 
   const pending = analysis.proposals.filter((p) => p.type !== 'ZOOM' && !state.accepted.includes(p.id) && !state.rejected.includes(p.id))
-  const counts = (['REMOVE', 'ZOOM', 'CHAPTER', 'HIGHLIGHT'] as ProposalType[]).map((k) => [k, analysis.summary[k]] as const).filter(([, n]) => n > 0)
+  const counts = (['REMOVE', 'SPEED', 'ZOOM', 'CHAPTER', 'HIGHLIGHT'] as ProposalType[]).map((k) => [k, analysis.summary[k] ?? 0] as const).filter(([, n]) => n > 0)
   if (state.dismissedAt && !review) return (
     <div className="director muted"><b>Smart Director</b> dismissed. <button onClick={() => setReview(true)}>Show suggestions</button> <button onClick={onRerun}>Analyze again</button></div>
   )
@@ -56,7 +57,7 @@ export function Director({ analysis, status, state, onAccept, onReject, onAccept
             return (
               <div key={p.id} className={`proposal ${p.type.toLowerCase()} ${done}`}>
                 <button className="when" onClick={() => onSeek(p.start)} title="Jump there">{fmt(p.start)}{p.end > p.start + 0.05 ? ` – ${fmt(p.end)}` : ''}</button>
-                <span className="what"><b>{VERB[p.type]}</b> · {p.reason} · <em>{p.confidence} confidence</em></span>
+                <span className="what"><b>{VERB[p.type]}{p.type === 'SPEED' && p.rate ? ` ${p.rate}×` : ''}</b> · {p.reason} · <em>{p.confidence} confidence</em></span>
                 <span className="act">
                   {done === 'auto' && <span className="tag">applied by auto-zoom</span>}
                   {done === 'accepted' && <span className="tag">accepted</span>}

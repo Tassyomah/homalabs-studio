@@ -38,11 +38,11 @@ export function layout(ev: RecordingEvents, cfg: RenderConfig): Layout {
 }
 
 /** One kept range of the recording, rendered at source time = srcStart + local frame. */
-const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: ProjectAssets; keys: CamKey[]; srcStart: number; L: Layout; transcript: Transcript | null }> =
-  ({ ev, cfg, assets, keys, srcStart, L, transcript }) => {
+const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: ProjectAssets; keys: CamKey[]; srcStart: number; rate: number; L: Layout; transcript: Transcript | null }> =
+  ({ ev, cfg, assets, keys, srcStart, rate, L, transcript }) => {
   const frame = useCurrentFrame()
   const { fps } = useVideoConfig()
-  const t = srcStart + frame / fps
+  const t = srcStart + (frame / fps) * rate
   const W = ev.display.width, H = ev.display.height
   const { frame: F, vp } = L
   const cam = cameraAt(ev, keys, t, W, H, vp)
@@ -65,7 +65,7 @@ const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: Projec
       <div style={{ position: 'absolute', left: F.x, top: F.y, width: F.w, height: F.h, borderRadius: cfg.radius,
                     overflow: 'hidden', boxShadow: '0 40px 120px rgba(20,20,15,0.35)', background: '#14140F' }}>
         <div style={{ position: 'absolute', left: 0, top: 0, width: W, height: H, transformOrigin: '0 0', transform: `translate(${tx}px, ${ty}px) scale(${cam.scale})` }}>
-          <OffthreadVideo src={assets.screen} muted startFrom={Math.round(srcStart * fps)} style={{ width: W, height: H, display: 'block' }} />
+          <OffthreadVideo src={assets.screen} muted startFrom={Math.round(srcStart * fps)} playbackRate={rate} style={{ width: W, height: H, display: 'block' }} />
           {ripple && (
             <div style={{ position: 'absolute', left: ripple.x - 60 * rp, top: ripple.y - 60 * rp, width: 120 * rp, height: 120 * rp,
                           borderRadius: '50%', background: 'rgba(251,139,115,0.45)', opacity: 1 - rp }} />
@@ -81,7 +81,7 @@ const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: Projec
         // Camera overlay sits over the screen frame and stays put while the screen zooms (spec §10, §11).
         <div style={{ position: 'absolute', left: F.x + webcam.x, top: F.y + webcam.y, width: webcam.w, height: webcam.h,
                       borderRadius: webcam.radius, overflow: 'hidden', boxShadow: '0 24px 70px rgba(20,20,15,0.4)', background: '#14140F' }}>
-          <TimedVideo src={assets.camera} start={camStart} fps={fps}
+          <TimedVideo src={assets.camera} start={camStart} fps={fps} rate={rate}
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: cfg.cameraMirror ? 'scaleX(-1)' : undefined }} />
         </div>
       )}
@@ -90,23 +90,23 @@ const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: Projec
           <Captions transcript={transcript} t={t} style={cfg.captions} FW={F.w} FH={F.h} portrait={L.vp.crop} />
         </div>
       )}
-      {assets.mic && cfg.micVolume > 0 && <TimedAudio src={assets.mic} start={micStart} fps={fps} volume={cfg.micVolume} />}
-      {assets.system && cfg.systemVolume > 0 && <TimedAudio src={assets.system} start={sysStart} fps={fps} volume={cfg.systemVolume} />}
+      {assets.mic && cfg.micVolume > 0 && <TimedAudio src={assets.mic} start={micStart} fps={fps} volume={cfg.micVolume} rate={rate} />}
+      {assets.system && cfg.systemVolume > 0 && <TimedAudio src={assets.system} start={sysStart} fps={fps} volume={cfg.systemVolume} rate={rate} />}
     </>
   )
 }
 
 /** A video whose own time axis starts `start` seconds into this segment (negative = it begins later than the segment). */
-const TimedVideo: React.FC<{ src: string; start: number; fps: number; style: React.CSSProperties }> = ({ src, start, fps, style }) =>
+const TimedVideo: React.FC<{ src: string; start: number; fps: number; rate: number; style: React.CSSProperties }> = ({ src, start, fps, rate, style }) =>
   start >= 0
-    ? <OffthreadVideo src={src} muted startFrom={Math.round(start * fps)} style={style} />
-    : <Sequence from={Math.round(-start * fps)} layout="none"><OffthreadVideo src={src} muted style={style} /></Sequence>
+    ? <OffthreadVideo src={src} muted startFrom={Math.round(start * fps)} playbackRate={rate} style={style} />
+    : <Sequence from={Math.round((-start / rate) * fps)} layout="none"><OffthreadVideo src={src} muted playbackRate={rate} style={style} /></Sequence>
 
 /** An audio track whose own time axis starts `start` seconds into this segment (negative = it begins later). */
-const TimedAudio: React.FC<{ src: string; start: number; fps: number; volume: number }> = ({ src, start, fps, volume }) =>
+const TimedAudio: React.FC<{ src: string; start: number; fps: number; volume: number; rate: number }> = ({ src, start, fps, volume, rate }) =>
   start >= 0
-    ? <Audio src={src} startFrom={Math.round(start * fps)} volume={volume} />
-    : <Sequence from={Math.round(-start * fps)} layout="none"><Audio src={src} volume={volume} /></Sequence>
+    ? <Audio src={src} startFrom={Math.round(start * fps)} volume={volume} playbackRate={rate} />
+    : <Sequence from={Math.round((-start / rate) * fps)} layout="none"><Audio src={src} volume={volume} playbackRate={rate} /></Sequence>
 
 /** Camera box in frame pixels, relative to the frame's top-left. Size is a fraction of the frame width. */
 export function cameraRect(cfg: RenderConfig, camera: { width: number; height: number }, FW: number, FH: number) {
@@ -125,20 +125,20 @@ export function cameraRect(cfg: RenderConfig, camera: { width: number; height: n
  * so the exporter can pick any integer output size without the layout maths changing.
  */
 export const Screencast: React.FC<ScreencastProps> = (props) => {
-  const { assets, events: ev, config: cfg, cuts = [], transcript = null } = props
+  const { assets, events: ev, config: cfg, cuts = [], zooms = [], speeds = [], transcript = null } = props
   const { fps, width: VW } = useVideoConfig()
   const L = useMemo(() => layout(ev, cfg), [ev, cfg])
-  const keys = useMemo(() => buildCamera(ev, cfg, L.vp), [ev, cfg, L])
-  const ranges = useMemo(() => keptRanges(ev, cuts), [ev, cuts])
+  const keys = useMemo(() => buildCamera(ev, cfg, L.vp, zooms), [ev, cfg, L, zooms])
+  const ranges = useMemo(() => keptRanges(ev, cuts, speeds), [ev, cuts, speeds])
   let from = 0
   return (
     <AbsoluteFill style={{ background: BACKGROUNDS[cfg.background] ?? BACKGROUNDS.indigo }}>
       <div style={{ position: 'absolute', left: 0, top: 0, width: L.width, height: L.height, transformOrigin: '0 0', transform: `scale(${VW / L.width})` }}>
         {ranges.map((r, i) => {
-          const len = Math.max(1, Math.round((r.end - r.start) * fps))
+          const len = Math.max(1, Math.round(((r.end - r.start) / r.rate) * fps))
           const seq = (
             <Sequence key={i} from={from} durationInFrames={len}>
-              <Segment ev={ev} cfg={cfg} assets={assets} keys={keys} srcStart={r.start} L={L} transcript={transcript} />
+              <Segment ev={ev} cfg={cfg} assets={assets} keys={keys} srcStart={r.start} rate={r.rate} L={L} transcript={transcript} />
             </Sequence>
           )
           from += len

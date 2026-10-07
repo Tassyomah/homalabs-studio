@@ -1,4 +1,4 @@
-import type { RecordingEvents, RenderConfig } from '../shared/types'
+import type { ManualZoom, RecordingEvents, RenderConfig } from '../shared/types'
 
 /**
  * The "camera" here is the virtual viewport over the screen recording (not the webcam).
@@ -30,32 +30,46 @@ export function restCenter(ev: RecordingEvents, t: number, W: number, H: number,
  * Auto-zoom: group clicks close in time and space, zoom in before the first click,
  * pan between clicks of the group, zoom out after the last. Returns keyframes.
  */
-export function buildCamera(ev: RecordingEvents, cfg: RenderConfig, vp: Viewport): CamKey[] {
+export function buildCamera(ev: RecordingEvents, cfg: RenderConfig, vp: Viewport, zooms: ManualZoom[] = []): CamKey[] {
   const W = ev.display.width, H = ev.display.height, z = cfg.zoom
-  if (z <= 1.001) return []
-  const zoomed = vp.base * z
-  const downs = ev.clicks.filter((c) => c.type === 'down').map((c) => ({ t: c.t - ev.t0Video, x: c.x, y: c.y }))
-    .filter((c) => c.t >= 0 && c.t <= ev.videoDuration)
   const LEAD = 0.55, TAIL = 1.6, EASE = 0.65, GAP = 2.6, DIST = 0.33 * W
-  type Group = { clicks: typeof downs }
+  type Pt = { t: number; x: number; y: number }
+  type Group = { clicks: Pt[]; level: number; tail: number }
   const groups: Group[] = []
-  for (const c of downs) {
-    const g = groups[groups.length - 1]
-    const last = g?.clicks[g.clicks.length - 1]
-    if (g && last && c.t - last.t < GAP && Math.hypot(c.x - last.x, c.y - last.y) < DIST) g.clicks.push(c)
-    else groups.push({ clicks: [c] })
+  if (z > 1.001) {
+    const downs: Pt[] = ev.clicks.filter((c) => c.type === 'down').map((c) => ({ t: c.t - ev.t0Video, x: c.x, y: c.y }))
+      .filter((c) => c.t >= 0 && c.t <= ev.videoDuration)
+    for (const c of downs) {
+      const g = groups[groups.length - 1]
+      const last = g?.clicks[g.clicks.length - 1]
+      if (g && last && c.t - last.t < GAP && Math.hypot(c.x - last.x, c.y - last.y) < DIST) g.clicks.push(c)
+      else groups.push({ clicks: [c], level: z, tail: TAIL })
+    }
   }
+  // Manual zooms (spec §26) are groups of their own: hold on the target for `duration`, at their own level.
+  for (const m of zooms) groups.push({ clicks: [{ t: m.t, x: m.x, y: m.y }, { t: m.t + m.duration, x: m.x, y: m.y }], level: m.level, tail: 0.1 })
+  groups.sort((a, b) => a.clicks[0].t - b.clicks[0].t)
+  // a manual zoom wins over automatic groups that overlap it
+  for (let i = groups.length - 1; i >= 0; i--) {
+    const g = groups[i]; if (g.tail !== 0.1) continue
+    const a = g.clicks[0].t - LEAD, b = g.clicks[g.clicks.length - 1].t + 1
+    for (let k = groups.length - 1; k >= 0; k--) { const o = groups[k]; if (o !== g && o.tail !== 0.1 && o.clicks[0].t < b && o.clicks[o.clicks.length - 1].t + TAIL > a) groups.splice(k, 1) }
+  }
+  if (!groups.length) return []
   const rest = (t: number) => restCenter(ev, t, W, H, vp)
   const keys: CamKey[] = []
   let prevEnd = -Infinity
   for (const g of groups) {
+    const zoomed = vp.base * g.level
     const first = g.clicks[0], last = g.clicks[g.clicks.length - 1]
-    const start = Math.max(0, first.t - LEAD), end = Math.min(ev.videoDuration, last.t + TAIL)
+    const start = Math.max(0, first.t - LEAD), end = Math.min(ev.videoDuration, last.t + g.tail)
     const [cx0, cy0] = clampCenter(first.x, first.y, zoomed, W, H, vp)
-    if (start - prevEnd < 0.8 && keys.length) {
+    if (start - prevEnd < 0.8 && keys.length && start > keys[keys.length - 2].t) {
       // adjacent group: stay zoomed and pan instead of zooming out and back in
       keys.splice(-1, 1)   // drop previous zoom-out
-      keys.push({ t: Math.min(start + EASE, first.t), scale: zoomed, cx: cx0, cy: cy0 })
+      keys.push({ t: Math.max(keys[keys.length - 1].t + 0.05, Math.min(start + EASE, first.t)), scale: zoomed, cx: cx0, cy: cy0 })
+    } else if (keys.length && start <= keys[keys.length - 1].t) {
+      continue   // overlaps the previous group entirely: skip
     } else {
       const [rx, ry] = rest(start)
       keys.push({ t: start, scale: vp.base, cx: rx, cy: ry }, { t: Math.min(start + EASE, first.t), scale: zoomed, cx: cx0, cy: cy0 })
@@ -65,9 +79,9 @@ export function buildCamera(ev: RecordingEvents, cfg: RenderConfig, vp: Viewport
       keys.push({ t: c.t, scale: zoomed, cx, cy })
     }
     const [cxl, cyl] = clampCenter(last.x, last.y, zoomed, W, H, vp)
-    const [rx, ry] = rest(end)
-    keys.push({ t: Math.max(end - EASE, last.t + 0.1), scale: zoomed, cx: cxl, cy: cyl }, { t: end, scale: vp.base, cx: rx, cy: ry })
-    prevEnd = end
+    const [rx, ry] = rest(end + EASE)
+    keys.push({ t: Math.max(end, last.t + 0.05), scale: zoomed, cx: cxl, cy: cyl }, { t: Math.min(ev.videoDuration, end + EASE), scale: vp.base, cx: rx, cy: ry })
+    prevEnd = end + EASE
   }
   return keys
 }

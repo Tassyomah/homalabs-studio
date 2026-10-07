@@ -27,7 +27,7 @@ const api: NarrateApi = {
   saveProject: (dir, file) => ipcRenderer.invoke('project:save', dir, file),
   analyzeProject: (dir, force) => ipcRenderer.invoke('project:analyze', dir, !!force),
   transcribeProject: (dir) => ipcRenderer.invoke('project:transcribe', dir),
-  exportProject: (dir, config, cuts, suffix, format) => ipcRenderer.invoke('project:export', dir, config, cuts, suffix, format),
+  exportProject: (dir, config, cuts, suffix, format, extra) => ipcRenderer.invoke('project:export', dir, config, cuts, suffix, format, extra),
   onExportProgress: listen<ExportProgress>('export:progress'),
   reveal: (p) => ipcRenderer.invoke('shell:reveal', p),
   onDevOpen: listen<string>('dev:open'),

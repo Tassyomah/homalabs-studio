@@ -792,6 +792,16 @@ def analyze(args):
         if s[1] - s[0] >= 4 and not any(abs(p["start"] - s[0]) < 1 for p in proposals if p["type"] == "REMOVE") and not any(s[0] <= c <= s[1] for c in clicks):
             add("REMOVE", s[0] + 0.5, s[1] - 0.5, f"{s[1] - s[0]:.1f}s without speech", "medium")
 
+    # SPEED — repetitive navigation: long stretches of busy cursor movement without clicks or speech (add-on §9).
+    moves_t = sorted(m[0] - t0 for m in ev["moves"])
+    for s in silences:
+        a, b = s
+        if b - a < 6: continue
+        if any(a <= c <= b for c in clicks): continue
+        n_moves = sum(1 for t in moves_t if a <= t <= b)
+        if n_moves / (b - a) >= 25:                                   # ≥25 position samples/s = the mouse is really moving
+            add("SPEED", a + 0.3, b - 0.3, f"{b - a:.0f}s of moving around without talking or clicking", "medium", rate=1.5)
+
     # CHAPTER — big visual changes, spaced out, not in the first seconds.
     last = -1e9
     for t, score in scenes:
@@ -819,7 +829,7 @@ def analyze(args):
         add("HIGHLIGHT", start, end, "busy stretch with clicks and visible change", "medium" if sc < 8 else "high", score=round(sc, 2))
         if len(chosen) == 3: break
 
-    summary = {k: sum(1 for p in proposals if p["type"] == k) for k in ("REMOVE", "ZOOM", "CHAPTER", "HIGHLIGHT")}
+    summary = {k: sum(1 for p in proposals if p["type"] == k) for k in ("REMOVE", "SPEED", "ZOOM", "CHAPTER", "HIGHLIGHT")}
     removable = sum(p["end"] - p["start"] for p in proposals if p["type"] == "REMOVE")
     analysis = {"version": 1, "analyzedAt": datetime.now().isoformat(timespec="seconds"), "duration": dur,
                 "signals": {"silences": silences, "scenes": scenes, "idle": idle, "clickGroups": [[g[0][0], g[-1][0], len(g)] for g in groups]},

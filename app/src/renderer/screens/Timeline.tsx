@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { Chapter, Cut, RecordingEvents } from '../../shared/types'
+import type { Chapter, Cut, ManualZoom, RecordingEvents, SpeedRange } from '../../shared/types'
 import { keptRanges, removedRanges, type Range } from '../../video/ranges'
 
 /**
@@ -7,8 +7,8 @@ import { keptRanges, removedRanges, type Range } from '../../video/ranges'
  * with the playhead. Click anywhere to seek. Editing happens through the buttons above it (trim / cut / restore),
  * never by dragging tiny handles — the spec wants a simple editor first (§2, §36).
  */
-export function Timeline({ ev, cuts, chapters = [], highlights = [], playhead, pendingCut, onSeek }: {
-  ev: RecordingEvents; cuts: Cut[]; chapters?: Chapter[]; highlights?: [number, number][]
+export function Timeline({ ev, cuts, chapters = [], highlights = [], zooms = [], speeds = [], playhead, pendingCut, onSeek }: {
+  ev: RecordingEvents; cuts: Cut[]; chapters?: Chapter[]; highlights?: [number, number][]; zooms?: ManualZoom[]; speeds?: SpeedRange[]
   playhead: number; pendingCut: number | null; onSeek: (tSrc: number) => void
 }) {
   const dur = ev.videoDuration
@@ -31,6 +31,8 @@ export function Timeline({ ev, cuts, chapters = [], highlights = [], playhead, p
           <div className="pending" style={{ left: pct(Math.min(pendingCut, playhead)), width: pct(Math.abs(playhead - pendingCut)) }} />
         )}
         {highlights.map(([a, b], i) => <div key={'h' + i} className="highlight" style={{ left: pct(a), width: pct(b - a) }} title={`Highlight ${fmt(a)}–${fmt(b)}`} />)}
+        {speeds.map((s, i) => <div key={'s' + i} className="speed" style={{ left: pct(s.start), width: pct(s.end - s.start) }} title={`${s.rate}× ${fmt(s.start)}–${fmt(s.end)}`} />)}
+        {zooms.map((z) => <div key={z.id} className="zoom" style={{ left: pct(z.t), width: pct(z.duration) }} title={`Zoom ${z.level}× ${fmt(z.t)}–${fmt(z.t + z.duration)}`} />)}
         {chapters.map((c, i) => <div key={'ch' + i} className="chapter" style={{ left: pct(c.t) }} title={`${c.title} · ${fmt(c.t)}`} />)}
         {ev.clicks.filter((c) => c.type === 'down').map((c, i) => (
           <i key={'d' + i} className="click" style={{ left: pct(c.t - ev.t0Video) }} />

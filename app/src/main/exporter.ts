@@ -5,7 +5,7 @@ import { existsSync, readdirSync, unlinkSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { createRequire } from 'node:module'
-import type { Cut, ExportFormat, ExportProgress, Project, RenderConfig, ScreencastProps } from '../shared/types'
+import type { Cut, ExportFormat, ExportProgress, ManualZoom, Project, RenderConfig, ScreencastProps, SpeedRange } from '../shared/types'
 import { outputSize } from '../video/Screencast'
 
 /**
@@ -60,12 +60,13 @@ function getBundle(appRoot: string, prebuilt?: string) {
   return bundlePromise
 }
 
-export async function exportProject(appRoot: string, project: Project, config: RenderConfig, cuts: Cut[], send: (p: ExportProgress) => void, suffix = 'narrate', format: ExportFormat = 'mp4', prebuilt?: string): Promise<string> {
+export async function exportProject(appRoot: string, project: Project, config: RenderConfig, cuts: Cut[], send: (p: ExportProgress) => void, suffix = 'narrate', format: ExportFormat = 'mp4', prebuilt?: string, extra?: { zooms: ManualZoom[]; speeds: SpeedRange[] }): Promise<string> {
   const safe = suffix.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '') || 'narrate'
   try {
     send({ stage: 'bundling', progress: 0, suffix: safe })
     const serveUrl = await getBundle(appRoot, prebuilt)
-    const inputProps: ScreencastProps = { assets: project.assets, events: project.events, config, cuts, transcript: project.transcript }
+    const inputProps: ScreencastProps = { assets: project.assets, events: project.events, config, cuts, transcript: project.transcript,
+      zooms: extra?.zooms ?? project.file?.zooms ?? [], speeds: extra?.speeds ?? project.file?.speeds ?? [] }
     const binaries = binariesDirectory()
     const design = await selectComposition({ serveUrl, id: 'Screencast', inputProps, binariesDirectory: binaries })
     // Render at an even integer size; the composition scales its design layout to whatever size it is given.

@@ -53,6 +53,10 @@ export interface Project {
 export type Cut = [number, number]
 
 export interface Chapter { t: number; title: string }
+/** A zoom the user placed by hand (spec §26): zoom in before `t`, hold on (x, y) for `duration`, zoom out. Screen pixels. */
+export interface ManualZoom { id: string; t: number; duration: number; x: number; y: number; level: number }
+/** Playback speed for a stretch of the recording (spec §40); 1 = normal. Source seconds. */
+export interface SpeedRange { start: number; end: number; rate: number }
 
 /**
  * A derivative of the master (add-on §4–5): the same recording with its own removed stretches and a few config
@@ -77,6 +81,8 @@ export interface ProjectFile {
   config: RenderConfig
   cuts: Cut[]
   assets?: DerivedAsset[]
+  zooms?: ManualZoom[]
+  speeds?: SpeedRange[]
   chapters?: Chapter[]
   /** Stand-alone moments (source seconds) the user kept from the Smart Director; future clip sources (add-on §19). */
   highlights?: [number, number][]
@@ -93,11 +99,11 @@ export interface Transcript { version: number; language: string; model: string; 
 export type CaptionStyle = 'off' | 'minimal' | 'bold'
 
 /** analysis.json — written by `narrate_win.py analyze` (add-on spec §7–9). Signals are raw; proposals are editable suggestions. */
-export type ProposalType = 'REMOVE' | 'ZOOM' | 'CHAPTER' | 'HIGHLIGHT'
+export type ProposalType = 'REMOVE' | 'ZOOM' | 'CHAPTER' | 'HIGHLIGHT' | 'SPEED'
 export interface Proposal {
   id: string; type: ProposalType; start: number; end: number
   reason: string; confidence: 'high' | 'medium' | 'low'
-  score?: number; clicks?: number; x?: number; y?: number
+  score?: number; clicks?: number; x?: number; y?: number; rate?: number
 }
 export interface Analysis {
   version: number; analyzedAt: string; duration: number
@@ -138,7 +144,7 @@ export const defaultConfig: RenderConfig = {
   micVolume: 1, systemVolume: 0.8, captions: 'off',
 }
 
-export type ScreencastProps = { assets: ProjectAssets; events: RecordingEvents; config: RenderConfig; cuts?: Cut[]; transcript?: Transcript | null; [k: string]: unknown }
+export type ScreencastProps = { assets: ProjectAssets; events: RecordingEvents; config: RenderConfig; cuts?: Cut[]; zooms?: ManualZoom[]; speeds?: SpeedRange[]; transcript?: Transcript | null; [k: string]: unknown }
 
 export type MicPermission = 'authorized' | 'denied' | 'restricted' | 'notDetermined' | 'unknown'
 export interface Permissions { screen: boolean; mic: MicPermission }
@@ -195,7 +201,7 @@ export interface NarrateApi {
   /** Local speech recognition → transcript.json. Progress arrives via onRecorderEvent 'transcribing'. */
   transcribeProject(dir: string): Promise<Transcript>
   /** Render one asset of the recording; `suffix` names the output file (`<stamp>-<suffix>.mp4`). */
-  exportProject(dir: string, config: RenderConfig, cuts: Cut[], suffix?: string, format?: ExportFormat): Promise<string>
+  exportProject(dir: string, config: RenderConfig, cuts: Cut[], suffix?: string, format?: ExportFormat, extra?: { zooms: ManualZoom[]; speeds: SpeedRange[] }): Promise<string>
   onExportProgress(cb: (p: ExportProgress) => void): () => void
   reveal(path: string): Promise<void>
   trashProject(dir: string): Promise<void>

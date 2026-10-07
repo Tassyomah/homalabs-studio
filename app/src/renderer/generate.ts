@@ -1,6 +1,9 @@
 import type { Analysis, Chapter, Cut, DerivedAsset, RecordingEvents, RenderConfig } from '../shared/types'
 import { ASSET_LABEL } from '../shared/types'
-import { keptRanges, type Range } from '../video/ranges'
+import { keptRanges } from '../video/ranges'
+
+/** A plain stretch of source time (no playback rate — derivatives inherit the master's speeds). */
+type Range = { start: number; end: number }
 
 /**
  * Generates the standard derivative set from what the recording itself says (add-on §13–19): the Smart Director's

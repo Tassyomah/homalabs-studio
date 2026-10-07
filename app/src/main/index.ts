@@ -3,7 +3,7 @@ import { join, resolve, basename } from 'node:path'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import type { Analysis, Cut, Devices, ExportFormat, ExportProgress, Project, ProjectFile, RecorderEvent, RenderConfig, StartOptions, Transcript, UnfinishedRecording } from '../shared/types'
+import type { Analysis, Cut, Devices, ExportFormat, ExportProgress, ManualZoom, Project, ProjectFile, RecorderEvent, RenderConfig, SpeedRange, StartOptions, Transcript, UnfinishedRecording } from '../shared/types'
 import { Recorder } from './recorder'
 import { AssetServer } from './assetServer'
 import { exportProject } from './exporter'
@@ -209,17 +209,18 @@ app.whenReady().then(async () => {
     await transcribing
     return JSON.parse(readFileSync(join(dir, 'transcript.json'), 'utf8'))
   })
-  ipcMain.handle('project:export', async (_e, dir: string, config: RenderConfig, cuts: Cut[] = [], suffix?: string, format?: ExportFormat) => {
+  ipcMain.handle('project:export', async (_e, dir: string, config: RenderConfig, cuts: Cut[] = [], suffix?: string, format?: ExportFormat, extra?: { zooms: ManualZoom[]; speeds: SpeedRange[] }) => {
     const p = loadProject(dir); if (!p) throw new Error('project not found')
     const send = (prog: ExportProgress) => win?.webContents.send('export:progress', prog)
-    return exportProject(APP_ROOT, p, config, cuts, send, suffix, format, join(RESOURCES, 'remotion'))
+    return exportProject(APP_ROOT, p, config, cuts, send, suffix, format, join(RESOURCES, 'remotion'), extra)
   })
   // Developer aid: NARRATE_EXPORT_ON_OPEN=1 with NARRATE_OPEN=<dir> exports that recording's master (as "packaged-test") and quits —
   // used to verify an installed build end to end without clicking.
   if (process.env.NARRATE_EXPORT_ON_OPEN && process.env.NARRATE_OPEN) {
     const p = loadProject(process.env.NARRATE_OPEN)
     if (p) exportProject(APP_ROOT, p, { ...(await import('../shared/types')).defaultConfig, ...(p.file?.config ?? {}), outputHeight: 480 }, p.file?.cuts ?? [],
-      (prog) => console.log('[dev] export', prog.stage, Math.round(prog.progress * 100) + '%', prog.message ?? ''), 'packaged-test', 'mp4', join(RESOURCES, 'remotion'))
+      (prog) => console.log('[dev] export', prog.stage, Math.round(prog.progress * 100) + '%', prog.message ?? ''), 'packaged-test', 'mp4', join(RESOURCES, 'remotion'),
+      { zooms: p.file?.zooms ?? [], speeds: p.file?.speeds ?? [] })
       .then(() => app.quit(), (e) => { console.log('[dev] export failed', e.message); app.quit() })
   }
   ipcMain.handle('shell:reveal', (_e, p: string) => shell.showItemInFolder(p))
