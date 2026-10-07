@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Player } from '@remotion/player'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Player, type PlayerRef } from '@remotion/player'
 import { Screencast, compositionSize } from '../../video/Screencast'
-import { keptDuration } from '../../video/ranges'
-import { defaultConfig, type Background, type CameraCorner, type CameraShape, type ExportProgress, type Project, type RenderConfig, type ScreencastProps } from '../../shared/types'
+import { keptDuration, keptRanges, outToSrc, srcToOut } from '../../video/ranges'
+import { defaultConfig, type Background, type CameraCorner, type CameraShape, type Cut, type ExportProgress, type Project, type RenderConfig, type ScreencastProps } from '../../shared/types'
 import { revealLabel } from '../platform'
+import { Timeline, fmt } from './Timeline'
 
 const FPS = 60
 const SHAPE: Record<CameraShape, string> = { off: 'Hidden', circle: 'Circle', rounded: 'Rounded' }
@@ -14,35 +15,108 @@ const BGS: { id: Background; label: string; css: string }[] = [
   { id: 'paper', label: 'Paper', css: '#EFEEE8' },
 ]
 
+/** Everything the user can change; one snapshot per undo step. */
+type Edits = { config: RenderConfig; cuts: Cut[] }
+
 export function Editor({ project }: { project: Project }) {
   // Saved edits win; defaults fill in settings that did not exist when the project was last saved.
-  const [config, setConfig] = useState<RenderConfig>(() => ({ ...defaultConfig, ...(project.file?.config ?? {}) }))
+  const [edits, setEdits] = useState<Edits>(() => ({ config: { ...defaultConfig, ...(project.file?.config ?? {}) }, cuts: project.file?.cuts ?? [] }))
+  const { config, cuts } = edits
+  const history = useRef<{ past: Edits[]; future: Edits[] }>({ past: [], future: [] })
+  const dirty = useRef(false)
+  const [, bump] = useState(0)
   const [prog, setProg] = useState<ExportProgress | null>(null)
+  const [playheadSrc, setPlayheadSrc] = useState(0)
+  const [pendingCut, setPendingCut] = useState<number | null>(null)
+  const playerRef = useRef<PlayerRef>(null)
   useEffect(() => window.narrate.onExportProgress(setProg), [])
 
+  /** Apply a change as a new undo step. */
+  const apply = useCallback((next: (e: Edits) => Edits) => {
+    setEdits((e) => {
+      const n = next(e)
+      history.current.past.push(e); history.current.future = []
+      if (history.current.past.length > 100) history.current.past.shift()
+      dirty.current = true
+      return n
+    })
+  }, [])
+  const set = <K extends keyof RenderConfig>(k: K, v: RenderConfig[K]) => apply((e) => ({ ...e, config: { ...e.config, [k]: v } }))
+  const undo = () => { const p = history.current.past.pop(); if (!p) return; history.current.future.push(edits); dirty.current = true; setEdits(p); bump((n) => n + 1) }
+  const redo = () => { const f = history.current.future.pop(); if (!f) return; history.current.past.push(edits); dirty.current = true; setEdits(f); bump((n) => n + 1) }
+
   // Autosave (spec §61): every change is written to project.json shortly after it happens.
-  const dirty = useRef(false)
   useEffect(() => {
     if (!dirty.current) return
     const t = setTimeout(() => {
-      window.narrate.saveProject(project.dir, { version: 1, config, savedAt: new Date().toISOString() }).catch((e) => console.warn('autosave failed', e))
+      window.narrate.saveProject(project.dir, { version: 1, config, cuts, savedAt: new Date().toISOString() }).catch((e) => console.warn('autosave failed', e))
     }, 400)
     return () => clearTimeout(t)
-  }, [config, project.dir])
+  }, [config, cuts, project.dir])
 
-  const props: ScreencastProps = useMemo(() => ({ assets: project.assets, events: project.events, config }), [project, config])
+  // Keyboard: Z / Y with Ctrl or ⌘ for undo / redo; space is the player's own.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      if (e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); undo() }
+      if (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey)) { e.preventDefault(); redo() }
+    }
+    window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h)
+  })
+
+  const props: ScreencastProps = useMemo(() => ({ assets: project.assets, events: project.events, config, cuts }), [project, config, cuts])
   const size = compositionSize(props)
-  const frames = Math.max(1, Math.ceil(keptDuration(project.events) * FPS))
+  const kept = useMemo(() => keptRanges(project.events, cuts), [project.events, cuts])
+  const frames = Math.max(1, Math.ceil(keptDuration(project.events, cuts) * FPS))
   const pauses = project.events.pauses?.length ?? 0
-  const set = <K extends keyof RenderConfig>(k: K, v: RenderConfig[K]) => { dirty.current = true; setConfig((c) => ({ ...c, [k]: v })) }
   const busy = prog && (prog.stage === 'bundling' || prog.stage === 'rendering')
+
+  // Player ↔ timeline: the player runs in output time, the timeline shows source time.
+  useEffect(() => {
+    const p = playerRef.current; if (!p) return
+    const h = (e: { detail: { frame: number } }) => setPlayheadSrc(outToSrc(kept, e.detail.frame / FPS))
+    p.addEventListener('frameupdate', h); return () => p.removeEventListener('frameupdate', h)
+  }, [kept])
+  const seekSrc = (tSrc: number) => {
+    const t = Math.max(0, Math.min(project.events.videoDuration, tSrc))
+    setPlayheadSrc(t); playerRef.current?.seekTo(Math.round(srcToOut(kept, t) * FPS))
+  }
+
+  // Cutting (spec §39): trim to the playhead, or mark a start then an end. All reversible.
+  const dur = project.events.videoDuration
+  const addCut = (a: number, b: number) => { if (Math.abs(b - a) >= 0.1) apply((e) => ({ ...e, cuts: [...e.cuts, [Math.min(a, b), Math.max(a, b)]] })) }
+  const trimStart = () => addCut(0, playheadSrc)
+  const trimEnd = () => addCut(playheadSrc, dur)
+  const cutHere = () => { if (pendingCut === null) setPendingCut(playheadSrc); else { addCut(pendingCut, playheadSrc); setPendingCut(null) } }
+  const restore = (i: number) => apply((e) => ({ ...e, cuts: e.cuts.filter((_, k) => k !== i) }))
+  const sortedCuts = cuts.map((c, i) => ({ c, i })).sort((x, y) => x.c[0] - y.c[0])
 
   return (
     <div className="editor">
-      <div className="stage">
-        <Player component={Screencast} inputProps={props} durationInFrames={frames} fps={FPS}
-          compositionWidth={size.width} compositionHeight={size.height} controls
-          style={{ width: '100%', height: '100%' }} />
+      <div className="work">
+        <div className="stage">
+          <Player ref={playerRef} component={Screencast} inputProps={props} durationInFrames={frames} fps={FPS}
+            compositionWidth={size.width} compositionHeight={size.height} controls
+            style={{ width: '100%', height: '100%' }} />
+        </div>
+        <div className="tools">
+          <button onClick={trimStart} disabled={playheadSrc < 0.1} title="Remove everything before the playhead">Trim start here</button>
+          <button onClick={trimEnd} disabled={playheadSrc > dur - 0.1} title="Remove everything after the playhead">Trim end here</button>
+          <button className={pendingCut !== null ? 'primary' : ''} onClick={cutHere}>{pendingCut === null ? 'Cut from here…' : '…to here'}</button>
+          {pendingCut !== null && <button onClick={() => setPendingCut(null)}>Cancel</button>}
+          <span className="spacer" />
+          <span className="hint">{pendingCut !== null ? `Cutting from ${fmt(pendingCut)}. Move the playhead and click “…to here”.` : `Output ${fmt(keptDuration(project.events, cuts))} of ${fmt(dur)} recorded`}</span>
+          <button onClick={undo} disabled={history.current.past.length === 0} title="Undo (Ctrl+Z)">Undo</button>
+          <button onClick={redo} disabled={history.current.future.length === 0} title="Redo (Ctrl+Y)">Redo</button>
+        </div>
+        <Timeline ev={project.events} cuts={cuts} playhead={playheadSrc} pendingCut={pendingCut} onSeek={seekSrc} />
+        {sortedCuts.length > 0 && (
+          <div className="cuts">
+            {sortedCuts.map(({ c, i }) => (
+              <div key={i}><span>Removed {fmt(c[0])} – {fmt(c[1])}</span><button onClick={() => restore(i)}>Restore</button></div>
+            ))}
+          </div>
+        )}
       </div>
       <div className="panel">
         <h2>Look</h2>
@@ -92,14 +166,14 @@ export function Editor({ project }: { project: Project }) {
         <div className="control"><div className="lbl"><span>Size</span></div>
           <div className="seg">{[1080, 1440, 0].map((h) => (
             <button key={h} className={config.outputHeight === h ? 'on' : ''} onClick={() => set('outputHeight', h)}>{h ? h + 'p' : 'Source'}</button>))}</div></div>
-        <button className="primary" disabled={!!busy} onClick={() => { setProg({ stage: 'bundling', progress: 0 }); window.narrate.exportProject(project.dir, config).catch(() => {}) }}>
+        <button className="primary" disabled={!!busy} onClick={() => { setProg({ stage: 'bundling', progress: 0 }); window.narrate.exportProject(project.dir, config, cuts).catch(() => {}) }}>
           {busy ? (prog!.stage === 'bundling' ? 'Preparing…' : `Rendering ${Math.round(prog!.progress * 100)}%`) : 'Export MP4'}
         </button>
         {busy && <div className="progress"><i style={{ width: `${prog!.progress * 100}%` }} /></div>}
         {prog?.stage === 'done' && prog.output && <button onClick={() => window.narrate.reveal(prog.output!)}>{revealLabel}</button>}
         {prog?.stage === 'error' && <p className="err">{prog.message}</p>}
         {pauses > 0 && <p className="note">{pauses} pause{pauses > 1 ? "s" : ""} removed automatically.</p>}
-        <p className="note">Not yet available: trimming, captions, narration takes, share links. They are on the roadmap, not hidden behind buttons.</p>
+        <p className="note">Not yet available: captions, narration takes, share links. They are on the roadmap, not hidden behind buttons.</p>
       </div>
     </div>
   )

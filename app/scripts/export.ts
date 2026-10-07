@@ -34,7 +34,7 @@ const base = { ...defaultConfig, ...(saved?.config ?? {}) }
 const config = { ...base, outputHeight: Number(heightArg ?? base.outputHeight), zoom: Number(zoomArg ?? base.zoom) }
 let last = -1
 const started = Date.now()
-const out = await exportProject(resolve(import.meta.dirname, '..'), project, config, (p) => {
+const out = await exportProject(resolve(import.meta.dirname, '..'), project, config, saved?.cuts ?? [], (p) => {
   const pct = Math.round(p.progress * 100)
   if (p.stage !== 'rendering' || pct !== last) { last = pct; console.log(`${p.stage} ${pct}% ${p.message ?? ''}`.trim()) }
 })

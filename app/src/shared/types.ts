@@ -47,10 +47,14 @@ export interface Project {
   file: ProjectFile | null
 }
 
+/** A removed stretch of the recording, in seconds relative to the start of screen.mp4. */
+export type Cut = [number, number]
+
 /** project.json — every edit is an instruction here; raw media are never touched (spec §38, §60). Autosaved (§61). */
 export interface ProjectFile {
   version: 1
   config: RenderConfig
+  cuts: Cut[]
   savedAt: string
 }
 export interface ProjectAssets { screen: string; mic: string | null; camera: string | null; system: string | null; cursors: Record<string, string> }
@@ -78,7 +82,7 @@ export const defaultConfig: RenderConfig = {
   micVolume: 1, systemVolume: 0.8,
 }
 
-export type ScreencastProps = { assets: ProjectAssets; events: RecordingEvents; config: RenderConfig; [k: string]: unknown }
+export type ScreencastProps = { assets: ProjectAssets; events: RecordingEvents; config: RenderConfig; cuts?: Cut[]; [k: string]: unknown }
 
 export type MicPermission = 'authorized' | 'denied' | 'restricted' | 'notDetermined' | 'unknown'
 export interface Permissions { screen: boolean; mic: MicPermission }
@@ -127,7 +131,7 @@ export interface NarrateApi {
   stopMicMeter(): Promise<void>
   onMicLevel(cb: (level: number) => void): () => void
   saveProject(dir: string, file: ProjectFile): Promise<void>
-  exportProject(dir: string, config: RenderConfig): Promise<string>
+  exportProject(dir: string, config: RenderConfig, cuts: Cut[]): Promise<string>
   onExportProgress(cb: (p: ExportProgress) => void): () => void
   reveal(path: string): Promise<void>
   trashProject(dir: string): Promise<void>

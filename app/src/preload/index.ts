@@ -25,7 +25,7 @@ const api: NarrateApi = {
   stopMicMeter: () => ipcRenderer.invoke('mic:meter:stop'),
   onMicLevel: listen<number>('mic:level'),
   saveProject: (dir, file) => ipcRenderer.invoke('project:save', dir, file),
-  exportProject: (dir, config) => ipcRenderer.invoke('project:export', dir, config),
+  exportProject: (dir, config, cuts) => ipcRenderer.invoke('project:export', dir, config, cuts),
   onExportProgress: listen<ExportProgress>('export:progress'),
   reveal: (p) => ipcRenderer.invoke('shell:reveal', p),
   onDevOpen: listen<string>('dev:open'),

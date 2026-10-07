@@ -1,7 +1,7 @@
 import { bundle } from '@remotion/bundler'
 import { renderMedia, selectComposition } from '@remotion/renderer'
 import { join } from 'node:path'
-import type { ExportProgress, Project, RenderConfig, ScreencastProps } from '../shared/types'
+import type { Cut, ExportProgress, Project, RenderConfig, ScreencastProps } from '../shared/types'
 import { outputSize } from '../video/Screencast'
 
 let bundlePromise: Promise<string> | null = null
@@ -10,11 +10,11 @@ function getBundle(appRoot: string) {
   return bundlePromise
 }
 
-export async function exportProject(appRoot: string, project: Project, config: RenderConfig, send: (p: ExportProgress) => void): Promise<string> {
+export async function exportProject(appRoot: string, project: Project, config: RenderConfig, cuts: Cut[], send: (p: ExportProgress) => void): Promise<string> {
   try {
     send({ stage: 'bundling', progress: 0 })
     const serveUrl = await getBundle(appRoot)
-    const inputProps: ScreencastProps = { assets: project.assets, events: project.events, config }
+    const inputProps: ScreencastProps = { assets: project.assets, events: project.events, config, cuts }
     const design = await selectComposition({ serveUrl, id: 'Screencast', inputProps })
     // Render at an even integer size; the composition scales its design layout to whatever size it is given.
     const composition = { ...design, ...outputSize(design, config.outputHeight) }

@@ -3,7 +3,7 @@ import { join, resolve, basename } from 'node:path'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import type { Devices, ExportProgress, Project, ProjectFile, RecorderEvent, RenderConfig, StartOptions, UnfinishedRecording } from '../shared/types'
+import type { Cut, Devices, ExportProgress, Project, ProjectFile, RecorderEvent, RenderConfig, StartOptions, UnfinishedRecording } from '../shared/types'
 import { Recorder } from './recorder'
 import { AssetServer } from './assetServer'
 import { exportProject } from './exporter'
@@ -169,10 +169,10 @@ app.whenReady().then(async () => {
     await writeFile(tmp, JSON.stringify(file, null, 1), 'utf8')
     await rename(tmp, join(dir, 'project.json'))   // atomic: project.json is always complete (spec §82)
   })
-  ipcMain.handle('project:export', async (_e, dir: string, config: RenderConfig) => {
+  ipcMain.handle('project:export', async (_e, dir: string, config: RenderConfig, cuts: Cut[] = []) => {
     const p = loadProject(dir); if (!p) throw new Error('project not found')
     const send = (prog: ExportProgress) => win?.webContents.send('export:progress', prog)
-    return exportProject(APP_ROOT, p, config, send)
+    return exportProject(APP_ROOT, p, config, cuts, send)
   })
   ipcMain.handle('shell:reveal', (_e, p: string) => shell.showItemInFolder(p))
   ipcMain.handle('project:trash', (_e, dir: string) => shell.trashItem(dir))

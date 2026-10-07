@@ -7,7 +7,7 @@ description: Resume building the Homalabs screen studio (working name "narrate")
 
 **Owner:** Tassy Omah (Esther Omah Atasie), designer, runs the agency Homalabs. Product is hers, open source, must feel like a serious Homalabs product.
 **Promise:** Record once. Let the software make it look good. Loom's ease + Screen Studio's automatic polish, own identity.
-**Repo:** this repository. Read, in order, before any work: `docs/SPEC.md` (her 108-section spec, governing), `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `README.md`.
+**Repo:** this repository. Read, in order, before any work: `docs/SPEC.md` (her 108-section spec, governing), `docs/SPEC-ADDON.md` (Smart Director / derivative assets / Asset Studio add-on, also governing; its text is cut off in §19 — ask her for the rest), `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `README.md`.
 
 ## Rules Tassy has set (do not re-ask)
 - Build vertically, Phase 1 → 8 as in SPEC §97. Phase 1 stable before moving on.
@@ -32,7 +32,14 @@ description: Resume building the Homalabs screen studio (working name "narrate")
 Working on both platforms: home (display, mic, countdown, permission notices) → record → floating control bar (pause/resume/stop, ⌘⇧P/⌘⇧S or Ctrl+Shift+P/S) → finalising states → editor with live preview (auto-zoom to click clusters, smoothed cursor, click ripple, padding, radius, 4 backgrounds, cursor size) → MP4 export (1080p/1440p/source) → Show in Finder/Explorer. Pauses removed non-destructively.
 Windows recorder verified by `smoke_win.py` on this laptop: ddagrab ≈ 52 fps at 1080p with Quick Sync, mic on the same clock (offset ≈ 0.4 s, recorded in events.json), cursor PNG correct. Encoder choice cached in `%LOCALAPPDATA%\Narrate\encoder.json`.
 Windows also has: crash recovery (journal + `finalize`; home screen shows Restore / Discard for unfinished recordings; tested by killing recorder + ffmpeg mid-recording), live mic level meter on the home screen (`meter` subcommand), ffmpeg children in a kill-on-close job object, camera recording (`--camera N` → `camera.mp4` on the shared clock) with an editable overlay in the editor (Hidden / Circle / Rounded, size, corner, mirror), system audio (`--system-audio` → `system.wav` via `win_loopback.py`, WASAPI loopback) with voice / computer-sound volume sliders in the editor.
-Phase 1 on Windows is feature-complete except window/region capture and a camera preview before recording. macOS lacks recovery, meter, camera and system audio (needs the same subcommands/flags in narrate.py / Swift). Next: Phase 2 (richer interaction data: scrolls, keyboard shortcuts, drag detection) and Phase 3/4 (zoom editing, trimming, aspect presets) per SPEC §97.
+Editor also has: project.json autosave (config + cuts, merged over defaults), timeline in source time (kept / pause / cut / clicks / playhead, click to seek), Trim start/end here, Cut from here…to here, Restore per cut, Undo/Redo (Ctrl+Z / Ctrl+Y), output vs recorded duration readout.
+Phase 1 on Windows is feature-complete except window/region capture and a camera preview before recording. macOS lacks recovery, meter, camera and system audio (needs the same subcommands/flags in narrate.py / Swift).
+
+## Roadmap (SPEC-ADDON, agreed 2026-10-06)
+1. Aspect presets (16:9 / 9:16 / 1:1 / 4:5 / source) with content-aware reframing: the viewport follows the zoom target; camera repositions. Needed by every derivative asset.
+2. Analysis layer (local, ffmpeg + events.json → `analysis.json` per recording): mic silences (`silencedetect`), screen changes (`select=gt(scene,…)`), idle stretches, click clusters, interaction density. Smart Director panel: proposals (REMOVE / ZOOM / SPEED / CHAPTER) with reason + confidence, Apply all / Review / Dismiss; accepted ones become cuts / zoom keys / chapters in project.json.
+3. Project model: master + `assets[]` derivatives (segments, aspect, config overrides, createdFromVersion). Asset Studio list on the editor; Quick Demo / LinkedIn / Vertical teaser / Clips generated from analysis; each opens in the same editor; Export all.
+4. Then transcript/captions (Phase 5), zoom editing, masks, GIF export.
 Known limits of both interim recorders: control bar appears in the capture; no window/region; no system audio. Windows multi-monitor ddagrab index order is assumed, untested (one display here).
 
 ## On a new machine

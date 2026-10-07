@@ -95,11 +95,11 @@ export function cameraRect(cfg: RenderConfig, camera: { width: number; height: n
  * without the layout maths changing.
  */
 export const Screencast: React.FC<ScreencastProps> = (props) => {
-  const { assets, events: ev, config: cfg } = props
+  const { assets, events: ev, config: cfg, cuts = [] } = props
   const { fps, width: VW } = useVideoConfig()
   const design = compositionSize(props)
   const keys = useMemo(() => buildCamera(ev, cfg), [ev, cfg])
-  const ranges = useMemo(() => keptRanges(ev), [ev])
+  const ranges = useMemo(() => keptRanges(ev, cuts), [ev, cuts])
   let from = 0
   return (
     <AbsoluteFill style={{ background: BACKGROUNDS[cfg.background] ?? BACKGROUNDS.indigo }}>
