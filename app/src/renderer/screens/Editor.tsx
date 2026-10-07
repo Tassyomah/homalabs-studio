@@ -179,7 +179,13 @@ export function Editor({ project }: { project: Project }) {
 
   // Cutting (spec §39): trim to the playhead, or mark a start then an end. All reversible.
   const dur = project.events.videoDuration
-  const addCut = (a: number, b: number) => { if (Math.abs(b - a) >= 0.1) setCuts((c) => [...c, [Math.min(a, b), Math.max(a, b)]]) }
+  // Never let a cut remove the whole video (spec §41: never delete without showing); at least half a second must stay.
+  const addCut = (a: number, b: number) => {
+    if (Math.abs(b - a) < 0.1) return
+    const next: Cut[] = [...cuts, [Math.min(a, b), Math.max(a, b)]]
+    if (keptDuration(project.events, next, speeds) < 0.5) { alert('That would remove the whole recording. Move the playhead first.'); return }
+    setCuts(() => next)
+  }
   const trimStart = () => addCut(0, playheadSrc)
   const trimEnd = () => addCut(playheadSrc, dur)
   const cutHere = () => { if (pendingCut === null) setPendingCut(playheadSrc); else { addCut(pendingCut, playheadSrc); setPendingCut(null) } }
@@ -255,7 +261,7 @@ export function Editor({ project }: { project: Project }) {
         </div>
         <div className="tools">
           <button onClick={trimStart} disabled={playheadSrc < 0.1} title="Remove everything before the playhead">Trim start here</button>
-          <button onClick={trimEnd} disabled={playheadSrc > dur - 0.1} title="Remove everything after the playhead">Trim end here</button>
+          <button onClick={trimEnd} disabled={playheadSrc < 0.5 || playheadSrc > dur - 0.1} title="Remove everything after the playhead">Trim end here</button>
           <button className={pendingCut !== null ? 'primary' : ''} onClick={cutHere}>{pendingCut === null ? 'Cut from here…' : '…to here'}</button>
           {pendingCut !== null && <button onClick={() => setPendingCut(null)}>Cancel</button>}
           {!asset && <>
