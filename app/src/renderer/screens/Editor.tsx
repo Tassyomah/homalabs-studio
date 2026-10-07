@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Player, type PlayerRef } from '@remotion/player'
 import { Screencast, compositionSize } from '../../video/Screencast'
 import { keptDuration, keptRanges, outToSrc, srcToOut } from '../../video/ranges'
-import { ASPECTS, ASSET_LABEL, defaultConfig, type Analysis, type Background, type CameraCorner, type CameraShape, type CaptionStyle, type Chapter, type Cut, type DerivedAsset, type ExportProgress, type ManualZoom, type Mask, type Project, type Proposal, type RenderConfig, type ScreencastProps, type SpeedRange, type Transcript, type TranscriptSegment } from '../../shared/types'
+import { ASPECTS, ASSET_LABEL, EXPORT_PRESETS, defaultConfig, type Analysis, type Background, type CameraCorner, type CameraShape, type CaptionStyle, type Chapter, type Cut, type DerivedAsset, type ExportProgress, type ManualZoom, type Mask, type Project, type Proposal, type RenderConfig, type ScreencastProps, type SpeedRange, type Transcript, type TranscriptSegment } from '../../shared/types'
 import { smoothCursor } from '../../video/motion'
 import { revealLabel } from '../platform'
 import { Timeline, fmt } from './Timeline'
@@ -400,6 +400,14 @@ export function Editor({ project }: { project: Project }) {
         </>)}
 
         <h2>Export</h2>
+        <div className="control"><div className="lbl"><span>Preset</span></div>
+          <select value="" onChange={(e) => { const pr = EXPORT_PRESETS.find((x) => x.id === e.target.value); if (pr) apply((ed) => asset
+            ? { ...ed, assets: ed.assets.map((a) => a.id === asset.id ? { ...a, config: { ...a.config, ...pr.config } } : a) }
+            : { ...ed, config: { ...ed.config, ...pr.config } }) }}>
+            <option value="">Apply a preset…</option>
+            {EXPORT_PRESETS.map((pr) => <option key={pr.id} value={pr.id}>{pr.label}</option>)}
+          </select>
+          <span className="note">Sets aspect, size and captions. Everything stays adjustable.</span></div>
         <div className="control"><div className="lbl"><span>Format</span></div>
           <div className="seg">
             <button className={format === 'mp4' ? 'on' : ''} onClick={() => setFormat('mp4')}>MP4</button>

@@ -181,6 +181,14 @@ export interface StartOptions { screen: number; mic: number | null; camera?: num
 /** A recording folder whose recorder died before writing events.json (recording.json still present). */
 export interface UnfinishedRecording { dir: string; name: string; startedAt: string; display: DisplayInfo; mic: string | null }
 export type ExportFormat = 'mp4' | 'gif'
+/** Export presets (spec §56): output and safe-area choices only, no platform branding. */
+export const EXPORT_PRESETS: { id: string; label: string; config: Partial<RenderConfig> }[] = [
+  { id: 'youtube', label: 'YouTube', config: { aspect: '16:9', outputHeight: 1080 } },
+  { id: 'shorts', label: 'Shorts / TikTok / Reels', config: { aspect: '9:16', outputHeight: 1080, captions: 'bold', cameraCorner: 'tr', cameraSize: 0.3 } },
+  { id: 'instagram', label: 'Instagram feed', config: { aspect: '1:1', outputHeight: 1080, captions: 'minimal' } },
+  { id: 'linkedin', label: 'LinkedIn', config: { aspect: '4:5', outputHeight: 1080, captions: 'minimal' } },
+  { id: 'web', label: 'Web (compact)', config: { aspect: 'source', outputHeight: 720 } },
+]
 export interface ExportProgress { progress: number; stage: 'bundling' | 'rendering' | 'done' | 'error'; message?: string; output?: string; suffix?: string }
 
 export type Platform = 'darwin' | 'win32' | 'linux'
