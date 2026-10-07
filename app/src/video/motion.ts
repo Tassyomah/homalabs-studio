@@ -1,25 +1,39 @@
 import type { RecordingEvents, RenderConfig } from '../shared/types'
 
-/** Camera keyframe in source-pixel space. */
+/**
+ * The "camera" here is the virtual viewport over the screen recording (not the webcam).
+ * Scale is absolute: screen pixels × scale = frame pixels. At rest the scale is `base` (the whole screen fits the
+ * frame, or — for cropping aspects like 9:16 — the frame is filled and the viewport follows the cursor).
+ */
 export interface CamKey { t: number; scale: number; cx: number; cy: number }
 export interface Camera { scale: number; cx: number; cy: number }
+/** Where the screen is shown: frame size in design pixels plus the rest scale. */
+export interface Viewport { FW: number; FH: number; base: number; crop: boolean }
 
 const easeInOut = (p: number) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2)
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
 
-/** Keep the zoomed viewport inside the screen. */
-export function clampCenter(cx: number, cy: number, scale: number, W: number, H: number): [number, number] {
-  const hw = W / (2 * scale), hh = H / (2 * scale)
-  return [clamp(cx, hw, W - hw), clamp(cy, hh, H - hh)]
+/** Keep the viewport (FW/scale × FH/scale screen pixels around cx,cy) inside the screen. */
+export function clampCenter(cx: number, cy: number, scale: number, W: number, H: number, vp: Viewport): [number, number] {
+  const hw = vp.FW / (2 * scale), hh = vp.FH / (2 * scale)
+  return [hw >= W / 2 ? W / 2 : clamp(cx, hw, W - hw), hh >= H / 2 ? H / 2 : clamp(cy, hh, H - hh)]
+}
+
+/** Where the viewport rests when nothing is zoomed: the screen centre, or the (slowly) followed cursor when cropping. */
+export function restCenter(ev: RecordingEvents, t: number, W: number, H: number, vp: Viewport): [number, number] {
+  if (!vp.crop) return [W / 2, H / 2]
+  const p = smoothCursor(ev, t, 0.6) ?? [W / 2, H / 2]
+  return clampCenter(p[0], p[1], vp.base, W, H, vp)
 }
 
 /**
  * Auto-zoom: group clicks close in time and space, zoom in before the first click,
  * pan between clicks of the group, zoom out after the last. Returns keyframes.
  */
-export function buildCamera(ev: RecordingEvents, cfg: RenderConfig): CamKey[] {
+export function buildCamera(ev: RecordingEvents, cfg: RenderConfig, vp: Viewport): CamKey[] {
   const W = ev.display.width, H = ev.display.height, z = cfg.zoom
   if (z <= 1.001) return []
+  const zoomed = vp.base * z
   const downs = ev.clicks.filter((c) => c.type === 'down').map((c) => ({ t: c.t - ev.t0Video, x: c.x, y: c.y }))
     .filter((c) => c.t >= 0 && c.t <= ev.videoDuration)
   const LEAD = 0.55, TAIL = 1.6, EASE = 0.65, GAP = 2.6, DIST = 0.33 * W
@@ -31,32 +45,36 @@ export function buildCamera(ev: RecordingEvents, cfg: RenderConfig): CamKey[] {
     if (g && last && c.t - last.t < GAP && Math.hypot(c.x - last.x, c.y - last.y) < DIST) g.clicks.push(c)
     else groups.push({ clicks: [c] })
   }
+  const rest = (t: number) => restCenter(ev, t, W, H, vp)
   const keys: CamKey[] = []
   let prevEnd = -Infinity
   for (const g of groups) {
     const first = g.clicks[0], last = g.clicks[g.clicks.length - 1]
-    let start = Math.max(0, first.t - LEAD), end = Math.min(ev.videoDuration, last.t + TAIL)
-    const [cx0, cy0] = clampCenter(first.x, first.y, z, W, H)
+    const start = Math.max(0, first.t - LEAD), end = Math.min(ev.videoDuration, last.t + TAIL)
+    const [cx0, cy0] = clampCenter(first.x, first.y, zoomed, W, H, vp)
     if (start - prevEnd < 0.8 && keys.length) {
       // adjacent group: stay zoomed and pan instead of zooming out and back in
       keys.splice(-1, 1)   // drop previous zoom-out
-      keys.push({ t: Math.min(start + EASE, first.t), scale: z, cx: cx0, cy: cy0 })
+      keys.push({ t: Math.min(start + EASE, first.t), scale: zoomed, cx: cx0, cy: cy0 })
     } else {
-      keys.push({ t: start, scale: 1, cx: cx0, cy: cy0 }, { t: Math.min(start + EASE, first.t), scale: z, cx: cx0, cy: cy0 })
+      const [rx, ry] = rest(start)
+      keys.push({ t: start, scale: vp.base, cx: rx, cy: ry }, { t: Math.min(start + EASE, first.t), scale: zoomed, cx: cx0, cy: cy0 })
     }
     for (const c of g.clicks.slice(1)) {
-      const [cx, cy] = clampCenter(c.x, c.y, z, W, H)
-      keys.push({ t: c.t, scale: z, cx, cy })
+      const [cx, cy] = clampCenter(c.x, c.y, zoomed, W, H, vp)
+      keys.push({ t: c.t, scale: zoomed, cx, cy })
     }
-    const [cxl, cyl] = clampCenter(last.x, last.y, z, W, H)
-    keys.push({ t: Math.max(end - EASE, last.t + 0.1), scale: z, cx: cxl, cy: cyl }, { t: end, scale: 1, cx: cxl, cy: cyl })
+    const [cxl, cyl] = clampCenter(last.x, last.y, zoomed, W, H, vp)
+    const [rx, ry] = rest(end)
+    keys.push({ t: Math.max(end - EASE, last.t + 0.1), scale: zoomed, cx: cxl, cy: cyl }, { t: end, scale: vp.base, cx: rx, cy: ry })
     prevEnd = end
   }
   return keys
 }
 
-export function cameraAt(keys: CamKey[], t: number, W: number, H: number): Camera {
-  if (!keys.length || t <= keys[0].t) return { scale: 1, cx: W / 2, cy: H / 2 }
+export function cameraAt(ev: RecordingEvents, keys: CamKey[], t: number, W: number, H: number, vp: Viewport): Camera {
+  const restCam = (): Camera => { const [cx, cy] = restCenter(ev, t, W, H, vp); return { scale: vp.base, cx, cy } }
+  if (!keys.length || t <= keys[0].t || t >= keys[keys.length - 1].t) return restCam()
   for (let i = 0; i < keys.length - 1; i++) {
     const a = keys[i], b = keys[i + 1]
     if (t >= a.t && t <= b.t) {
@@ -64,7 +82,7 @@ export function cameraAt(keys: CamKey[], t: number, W: number, H: number): Camer
       return { scale: a.scale + (b.scale - a.scale) * p, cx: a.cx + (b.cx - a.cx) * p, cy: a.cy + (b.cy - a.cy) * p }
     }
   }
-  return { scale: 1, cx: W / 2, cy: H / 2 }
+  return restCam()
 }
 
 /** Raw cursor position at time t (relative to video start), linear between samples. */
@@ -79,7 +97,7 @@ export function rawCursor(ev: RecordingEvents, t: number): [number, number] | nu
   return [a[1] + (b[1] - a[1]) * p, a[2] + (b[2] - a[2]) * p]
 }
 
-/** Gaussian-smoothed cursor: removes hand jitter, keeps the path. */
+/** Gaussian-smoothed cursor: removes hand jitter, keeps the path. Larger sigma = lazier follow. */
 export function smoothCursor(ev: RecordingEvents, t: number, sigma = 0.045): [number, number] | null {
   let sx = 0, sy = 0, sw = 0
   for (let k = -3; k <= 3; k++) {

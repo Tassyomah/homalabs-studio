@@ -26,7 +26,8 @@ Spec: `docs/SPEC.md` (governing). This file records how the code is shaped to me
 | media / storage | project folder `~/Movies/Narrate/<stamp>/` (Windows: `~/Videos/Narrate/`): `screen.mp4`, `mic.wav`, `camera.mp4` (optional), `events.json`, `cursors/`. Raw media is never modified after finalisation. |
 | system audio (Windows) | `recorder/win_loopback.py`: WASAPI loopback of the default output via ctypes/raw COM, float32 WAV, silence gaps filled from the device position so sample N is always at `t0System + N/rate`. Converted to `system.wav` at finalisation; mixed in the composition with its own volume. |
 | camera overlay | `app/src/video/Screencast.tsx` `cameraRect` + `TimedVideo`: the camera is its own file on the shared clock (`cameraOffset`), composited over the screen frame at render time with shape / size / corner / mirror from `RenderConfig`, so placement stays editable (spec §10). It does not move with the zoom. |
-| cursor + zoom (rendering) | `app/src/video/motion.ts` (camera keyframes, smoothing), `ranges.ts` (kept ranges), `Screencast.tsx` |
+| cursor + zoom (rendering) | `app/src/video/motion.ts` (viewport keyframes over the screen, cursor smoothing, cursor-follow for cropping aspects), `ranges.ts` (kept ranges, output↔source time), `Screencast.tsx` (`layout()`: canvas / frame / viewport per aspect; segments; camera overlay; audio tracks) |
+| aspect presets | `layout()` in `Screencast.tsx`: `source` = screen + padding; 16:9 fits the whole screen; 9:16 / 4:5 / 1:1 fill the frame, crop the screen and let the viewport follow the smoothed cursor and zoom to clicks (content-aware reframing, add-on §17). Output "1080p" names the shorter side. |
 | export | `app/src/main/exporter.ts` |
 | UI | `app/src/renderer/**` |
 | shared contracts | `app/src/shared/types.ts` |

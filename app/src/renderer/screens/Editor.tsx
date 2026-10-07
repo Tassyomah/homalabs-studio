@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Player, type PlayerRef } from '@remotion/player'
 import { Screencast, compositionSize } from '../../video/Screencast'
 import { keptDuration, keptRanges, outToSrc, srcToOut } from '../../video/ranges'
-import { defaultConfig, type Background, type CameraCorner, type CameraShape, type Cut, type ExportProgress, type Project, type RenderConfig, type ScreencastProps } from '../../shared/types'
+import { ASPECTS, defaultConfig, type Background, type CameraCorner, type CameraShape, type Cut, type ExportProgress, type Project, type RenderConfig, type ScreencastProps } from '../../shared/types'
 import { revealLabel } from '../platform'
 import { Timeline, fmt } from './Timeline'
 
@@ -119,6 +119,13 @@ export function Editor({ project }: { project: Project }) {
         )}
       </div>
       <div className="panel">
+        <h2>Format</h2>
+        <div className="control"><div className="lbl"><span>Aspect</span><span>{config.aspect === 'source' ? `${project.events.display.width}×${project.events.display.height}` : config.aspect}</span></div>
+          <div className="seg">{ASPECTS.map((a) => (
+            <button key={a.id} className={config.aspect === a.id ? 'on' : ''} onClick={() => set('aspect', a.id)}>{a.label}</button>))}</div>
+          {config.aspect !== 'source' && ASPECTS.find((a) => a.id === config.aspect)!.ratio! < 1 &&
+            <span className="note">Vertical and square formats crop the screen and follow the cursor and clicks.</span>}</div>
+
         <h2>Look</h2>
         <div className="control"><div className="lbl"><span>Auto-zoom</span><span>{config.zoom === 1 ? 'off' : config.zoom.toFixed(1) + '×'}</span></div>
           <input type="range" min={1} max={3} step={0.1} value={config.zoom} onChange={(e) => set('zoom', Number(e.target.value))} /></div>

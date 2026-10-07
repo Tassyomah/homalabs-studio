@@ -62,7 +62,14 @@ export interface ProjectAssets { screen: string; mic: string | null; camera: str
 export type Background = 'indigo' | 'coral' | 'ink' | 'paper'
 export type CameraShape = 'off' | 'circle' | 'rounded'
 export type CameraCorner = 'br' | 'bl' | 'tr' | 'tl'
+/** Output aspect (spec §28–29). 'source' = the screen's own aspect; portrait/square presets crop and follow the action. */
+export type Aspect = 'source' | '16:9' | '9:16' | '1:1' | '4:5'
+export const ASPECTS: { id: Aspect; label: string; ratio: number | null }[] = [
+  { id: 'source', label: 'Screen', ratio: null }, { id: '16:9', label: '16:9', ratio: 16 / 9 },
+  { id: '9:16', label: '9:16', ratio: 9 / 16 }, { id: '1:1', label: '1:1', ratio: 1 }, { id: '4:5', label: '4:5', ratio: 4 / 5 },
+]
 export interface RenderConfig {
+  aspect: Aspect
   zoom: number          // 1 = off, 2 = Screen-Studio-like
   padding: number       // fraction of screen width on each side
   radius: number        // px at source scale
@@ -77,7 +84,7 @@ export interface RenderConfig {
   systemVolume: number  // 0..1.5, 0 = muted
 }
 export const defaultConfig: RenderConfig = {
-  zoom: 2, padding: 0.06, radius: 24, background: 'indigo', cursorScale: 1.6, outputHeight: 1080,
+  aspect: 'source', zoom: 2, padding: 0.06, radius: 24, background: 'indigo', cursorScale: 1.6, outputHeight: 1080,
   cameraShape: 'circle', cameraSize: 0.2, cameraCorner: 'br', cameraMirror: true,
   micVolume: 1, systemVolume: 0.8,
 }

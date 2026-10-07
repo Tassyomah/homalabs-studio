@@ -1,7 +1,7 @@
 import { AbsoluteFill, Audio, Img, OffthreadVideo, Sequence, useCurrentFrame, useVideoConfig } from 'remotion'
 import { useMemo } from 'react'
-import type { RecordingEvents, RenderConfig, ScreencastProps, ProjectAssets } from '../shared/types'
-import { buildCamera, cameraAt, cursorIdAt, smoothCursor, type CamKey } from './motion'
+import { ASPECTS, type RecordingEvents, type RenderConfig, type ScreencastProps, type ProjectAssets } from '../shared/types'
+import { buildCamera, cameraAt, cursorIdAt, smoothCursor, type CamKey, type Viewport } from './motion'
 import { keptRanges } from './ranges'
 
 const BACKGROUNDS: Record<string, string> = {
@@ -11,16 +11,41 @@ const BACKGROUNDS: Record<string, string> = {
   paper: '#EFEEE8',
 }
 
-/** One kept range of the recording, rendered at source time = srcStart + local frame. `CH` is the design height. */
-const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: ProjectAssets; keys: CamKey[]; srcStart: number; CH: number }> =
-  ({ ev, cfg, assets, keys, srcStart, CH }) => {
+/** Design-space layout: canvas size, where the screen frame sits, and the viewport the camera works in. */
+export interface Layout { width: number; height: number; frame: { x: number; y: number; w: number; h: number }; vp: Viewport }
+
+/**
+ * - 'source': canvas = screen + padding; the frame is the screen at 1:1.
+ * - landscape presets (16:9): the screen is fitted inside the canvas (never cropped).
+ * - portrait / square presets (9:16, 4:5, 1:1): the frame fills the canvas and crops the screen; the viewport
+ *   follows the cursor and zooms (content-aware reframing, add-on spec §17).
+ */
+export function layout(ev: RecordingEvents, cfg: RenderConfig): Layout {
+  const W = ev.display.width, H = ev.display.height, pad = Math.round(W * cfg.padding)
+  const even = (n: number) => { const r = Math.round(n); return r % 2 ? r + 1 : r }
+  const ratio = ASPECTS.find((a) => a.id === cfg.aspect)?.ratio ?? null
+  if (ratio === null) return { width: even(W + 2 * pad), height: even(H + 2 * pad), frame: { x: pad, y: pad, w: W, h: H }, vp: { FW: W, FH: H, base: 1, crop: false } }
+  if (ratio >= 1) {
+    const width = even(W + 2 * pad), height = even(width / ratio)
+    const fit = Math.min((width - 2 * pad) / W, (height - 2 * pad) / H)
+    const fw = Math.round(W * fit), fh = Math.round(H * fit)
+    return { width, height, frame: { x: Math.round((width - fw) / 2), y: Math.round((height - fh) / 2), w: fw, h: fh }, vp: { FW: fw, FH: fh, base: fit, crop: false } }
+  }
+  const height = even(H + 2 * pad), width = even(height * ratio)
+  const fw = width - 2 * pad, fh = height - 2 * pad
+  return { width, height, frame: { x: pad, y: pad, w: fw, h: fh }, vp: { FW: fw, FH: fh, base: Math.max(fw / W, fh / H), crop: true } }
+}
+
+/** One kept range of the recording, rendered at source time = srcStart + local frame. */
+const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: ProjectAssets; keys: CamKey[]; srcStart: number; L: Layout }> =
+  ({ ev, cfg, assets, keys, srcStart, L }) => {
   const frame = useCurrentFrame()
   const { fps } = useVideoConfig()
   const t = srcStart + frame / fps
   const W = ev.display.width, H = ev.display.height
-  const pad = Math.round(W * cfg.padding)
-  const cam = cameraAt(keys, t, W, H)
-  const tx = W / 2 - cam.cx * cam.scale, ty = H / 2 - cam.cy * cam.scale
+  const { frame: F, vp } = L
+  const cam = cameraAt(ev, keys, t, W, H, vp)
+  const tx = F.w / 2 - cam.cx * cam.scale, ty = F.h / 2 - cam.cy * cam.scale
   const pos = smoothCursor(ev, t)
   const cid = cursorIdAt(ev, t)
   const shape = cid ? ev.cursors[cid] : null
@@ -32,13 +57,13 @@ const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: Projec
   const sysStart = srcStart - (ev.systemOffset ?? 0)
   // The camera starts a moment after the screen; show the overlay only once it has frames (no black box at the start).
   const cameraHasFrames = t - (ev.cameraOffset ?? 0) >= 0 && (!ev.camera?.duration || t - (ev.cameraOffset ?? 0) <= ev.camera.duration)
-  const webcam = assets.camera && ev.camera && cfg.cameraShape !== 'off' && cameraHasFrames ? cameraRect(cfg, ev.camera, W, H) : null
+  const webcam = assets.camera && ev.camera && cfg.cameraShape !== 'off' && cameraHasFrames ? cameraRect(cfg, ev.camera, F.w, F.h) : null
 
   return (
     <>
-      <div style={{ position: 'absolute', left: pad, top: (CH - H) / 2, width: W, height: H, borderRadius: cfg.radius,
-                    overflow: 'hidden', boxShadow: '0 40px 120px rgba(20,20,15,0.35)' }}>
-        <div style={{ position: 'absolute', inset: 0, transformOrigin: '0 0', transform: `translate(${tx}px, ${ty}px) scale(${cam.scale})` }}>
+      <div style={{ position: 'absolute', left: F.x, top: F.y, width: F.w, height: F.h, borderRadius: cfg.radius,
+                    overflow: 'hidden', boxShadow: '0 40px 120px rgba(20,20,15,0.35)', background: '#14140F' }}>
+        <div style={{ position: 'absolute', left: 0, top: 0, width: W, height: H, transformOrigin: '0 0', transform: `translate(${tx}px, ${ty}px) scale(${cam.scale})` }}>
           <OffthreadVideo src={assets.screen} muted startFrom={Math.round(srcStart * fps)} style={{ width: W, height: H, display: 'block' }} />
           {ripple && (
             <div style={{ position: 'absolute', left: ripple.x - 60 * rp, top: ripple.y - 60 * rp, width: 120 * rp, height: 120 * rp,
@@ -53,7 +78,7 @@ const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: Projec
       </div>
       {webcam && assets.camera && (
         // Camera overlay sits over the screen frame and stays put while the screen zooms (spec §10, §11).
-        <div style={{ position: 'absolute', left: pad + webcam.x, top: (CH - H) / 2 + webcam.y, width: webcam.w, height: webcam.h,
+        <div style={{ position: 'absolute', left: F.x + webcam.x, top: F.y + webcam.y, width: webcam.w, height: webcam.h,
                       borderRadius: webcam.radius, overflow: 'hidden', boxShadow: '0 24px 70px rgba(20,20,15,0.4)', background: '#14140F' }}>
           <TimedVideo src={assets.camera} start={camStart} fps={fps}
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: cfg.cameraMirror ? 'scaleX(-1)' : undefined }} />
@@ -65,51 +90,49 @@ const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: Projec
   )
 }
 
-/** An audio track whose own time axis starts `start` seconds into this segment (negative = it begins later). */
-const TimedAudio: React.FC<{ src: string; start: number; fps: number; volume: number }> = ({ src, start, fps, volume }) =>
-  start >= 0
-    ? <Audio src={src} startFrom={Math.round(start * fps)} volume={volume} />
-    : <Sequence from={Math.round(-start * fps)} layout="none"><Audio src={src} volume={volume} /></Sequence>
-
 /** A video whose own time axis starts `start` seconds into this segment (negative = it begins later than the segment). */
 const TimedVideo: React.FC<{ src: string; start: number; fps: number; style: React.CSSProperties }> = ({ src, start, fps, style }) =>
   start >= 0
     ? <OffthreadVideo src={src} muted startFrom={Math.round(start * fps)} style={style} />
     : <Sequence from={Math.round(-start * fps)} layout="none"><OffthreadVideo src={src} muted style={style} /></Sequence>
 
-/** Camera box in screen-pixel space, relative to the screen frame's top-left. */
-export function cameraRect(cfg: RenderConfig, camera: { width: number; height: number }, W: number, H: number) {
-  const w = Math.round(W * cfg.cameraSize)
+/** An audio track whose own time axis starts `start` seconds into this segment (negative = it begins later). */
+const TimedAudio: React.FC<{ src: string; start: number; fps: number; volume: number }> = ({ src, start, fps, volume }) =>
+  start >= 0
+    ? <Audio src={src} startFrom={Math.round(start * fps)} volume={volume} />
+    : <Sequence from={Math.round(-start * fps)} layout="none"><Audio src={src} volume={volume} /></Sequence>
+
+/** Camera box in frame pixels, relative to the frame's top-left. Size is a fraction of the frame width. */
+export function cameraRect(cfg: RenderConfig, camera: { width: number; height: number }, FW: number, FH: number) {
+  const w = Math.round(FW * cfg.cameraSize)
   const aspect = camera.width && camera.height ? camera.width / camera.height : 4 / 3
   const h = cfg.cameraShape === 'circle' ? w : Math.round(w / aspect)
-  const margin = Math.round(W * 0.025)
-  const x = cfg.cameraCorner.endsWith('l') ? margin : W - w - margin
-  const y = cfg.cameraCorner.startsWith('t') ? margin : H - h - margin
+  const margin = Math.round(FW * 0.025)
+  const x = cfg.cameraCorner.endsWith('l') ? margin : FW - w - margin
+  const y = cfg.cameraCorner.startsWith('t') ? margin : FH - h - margin
   const radius = cfg.cameraShape === 'circle' ? w / 2 : Math.round(w * 0.12)
   return { x, y, w, h, radius }
 }
 
 /**
- * Lays the screencast out in its design size (source pixels + padding, see compositionSize) and scales that to
- * whatever the composition is rendered at, so the exporter can pick any integer output size (720p, 1080p, 4K)
- * without the layout maths changing.
+ * Lays the screencast out in its design size and scales that to whatever the composition is rendered at,
+ * so the exporter can pick any integer output size without the layout maths changing.
  */
 export const Screencast: React.FC<ScreencastProps> = (props) => {
   const { assets, events: ev, config: cfg, cuts = [] } = props
   const { fps, width: VW } = useVideoConfig()
-  const design = compositionSize(props)
-  const keys = useMemo(() => buildCamera(ev, cfg), [ev, cfg])
+  const L = useMemo(() => layout(ev, cfg), [ev, cfg])
+  const keys = useMemo(() => buildCamera(ev, cfg, L.vp), [ev, cfg, L])
   const ranges = useMemo(() => keptRanges(ev, cuts), [ev, cuts])
   let from = 0
   return (
     <AbsoluteFill style={{ background: BACKGROUNDS[cfg.background] ?? BACKGROUNDS.indigo }}>
-      <div style={{ position: 'absolute', left: 0, top: 0, width: design.width, height: design.height,
-                    transformOrigin: '0 0', transform: `scale(${VW / design.width})` }}>
+      <div style={{ position: 'absolute', left: 0, top: 0, width: L.width, height: L.height, transformOrigin: '0 0', transform: `scale(${VW / L.width})` }}>
         {ranges.map((r, i) => {
           const len = Math.max(1, Math.round((r.end - r.start) * fps))
           const seq = (
             <Sequence key={i} from={from} durationInFrames={len}>
-              <Segment ev={ev} cfg={cfg} assets={assets} keys={keys} srcStart={r.start} CH={design.height} />
+              <Segment ev={ev} cfg={cfg} assets={assets} keys={keys} srcStart={r.start} L={L} />
             </Sequence>
           )
           from += len
@@ -120,16 +143,20 @@ export const Screencast: React.FC<ScreencastProps> = (props) => {
   )
 }
 
-/** Design size: the screen plus padding on every side; aspect follows the screen. Even numbers for 4:2:0 encoders. */
+/** Design size of the composition (even numbers for 4:2:0 encoders). */
 export function compositionSize(p: ScreencastProps) {
-  const W = p.events.display.width, H = p.events.display.height, pad = Math.round(W * p.config.padding)
-  const width = W + 2 * pad, height = H + 2 * pad
-  return { width: width % 2 ? width + 1 : width, height: height % 2 ? height + 1 : height }
+  const L = layout(p.events, p.config)
+  return { width: L.width, height: L.height }
 }
 
-/** Output size for a target height (0 = design size): same aspect as the design, both dimensions even integers. */
+/**
+ * Output size for a quality setting (0 = design size): same aspect as the design, both dimensions even integers.
+ * The setting names the shorter side, so "1080p" is 1920×1080 for landscape and 1080×1920 for 9:16.
+ */
 export function outputSize(design: { width: number; height: number }, outputHeight: number) {
   const even = (n: number) => Math.max(2, Math.round(n / 2) * 2)
-  if (!outputHeight || outputHeight >= design.height) return { width: even(design.width), height: even(design.height) }
-  return { width: even(design.width * outputHeight / design.height), height: even(outputHeight) }
+  const short = Math.min(design.width, design.height)
+  if (!outputHeight || outputHeight >= short) return { width: even(design.width), height: even(design.height) }
+  const s = outputHeight / short
+  return { width: even(design.width * s), height: even(design.height * s) }
 }
