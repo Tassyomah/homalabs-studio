@@ -54,9 +54,18 @@ function devScreenshot(w: BrowserWindow) {
     const open = process.env.NARRATE_OPEN
     if (open) w.webContents.send('dev:open', open)
     setTimeout(async () => {
-      const img = await w.webContents.capturePage()
-      await writeFile(file, img.toPNG())
-      console.log('[dev] screenshot written', file)
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        try {
+          w.focus()
+          const img = await w.webContents.capturePage()
+          await writeFile(file, img.toPNG())
+          console.log('[dev] screenshot written', file)
+          break
+        } catch (e) {   // the compositor occasionally refuses a capture (UnknownVizError); try again shortly
+          console.log(`[dev] screenshot attempt ${attempt} failed:`, (e as Error).message)
+          await new Promise((r) => setTimeout(r, 1200))
+        }
+      }
       app.quit()
     }, Number(process.env.NARRATE_SCREENSHOT_DELAY ?? 2500))
   })
