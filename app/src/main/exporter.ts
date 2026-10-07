@@ -1,5 +1,5 @@
 import { bundle } from '@remotion/bundler'
-import { renderMedia, selectComposition } from '@remotion/renderer'
+import { renderMedia, renderStill, selectComposition } from '@remotion/renderer'
 import { join } from 'node:path'
 import { existsSync, readdirSync, unlinkSync } from 'node:fs'
 import { spawn } from 'node:child_process'
@@ -58,6 +58,31 @@ function getBundle(appRoot: string, prebuilt?: string) {
   if (prebuilt && existsSync(join(prebuilt, 'index.html'))) return Promise.resolve(prebuilt)
   bundlePromise ??= bundle({ entryPoint: join(appRoot, 'src/video/index.ts'), webpackOverride: (c) => c })
   return bundlePromise
+}
+
+/**
+ * Thumbnail candidates (add-on §13): still frames of the polished master at the given output seconds, 1280 px wide,
+ * written to <dir>/thumbs/thumb-<n>.png. Returns the file paths in order.
+ */
+export async function renderThumbnails(appRoot: string, project: Project, config: RenderConfig, cuts: Cut[], timesOut: number[], prebuilt?: string, extra?: MasterExtras): Promise<string[]> {
+  const serveUrl = await getBundle(appRoot, prebuilt)
+  const inputProps: ScreencastProps = { assets: project.assets, events: project.events, config, cuts, transcript: project.transcript,
+    zooms: extra?.zooms ?? project.file?.zooms ?? [], speeds: extra?.speeds ?? project.file?.speeds ?? [], masks: extra?.masks ?? project.file?.masks ?? [] }
+  const binaries = binariesDirectory()
+  const design = await selectComposition({ serveUrl, id: 'Screencast', inputProps, binariesDirectory: binaries })
+  const scale = 1280 / design.width
+  const composition = { ...design, width: 1280, height: Math.round(design.height * scale / 2) * 2 }
+  const dir = join(project.dir, 'thumbs')
+  const { mkdirSync } = await import('node:fs')
+  mkdirSync(dir, { recursive: true })
+  const out: string[] = []
+  for (let i = 0; i < timesOut.length; i++) {
+    const frame = Math.max(0, Math.min(composition.durationInFrames - 1, Math.round(timesOut[i] * composition.fps)))
+    const file = join(dir, `thumb-${i + 1}.png`)
+    await renderStill({ composition, serveUrl, output: file, inputProps, frame, imageFormat: 'png', binariesDirectory: binaries })
+    out.push(file)
+  }
+  return out
 }
 
 export async function exportProject(appRoot: string, project: Project, config: RenderConfig, cuts: Cut[], send: (p: ExportProgress) => void, suffix = 'narrate', format: ExportFormat = 'mp4', prebuilt?: string, extra?: MasterExtras): Promise<string> {

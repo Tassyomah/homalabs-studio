@@ -118,6 +118,16 @@ select { padding: 9px 12px; border-radius: 10px; border: 1px solid var(--ink-10)
 .section button:last-child { padding: 4px 10px; font-size: 12px; opacity: 0; }
 .section:hover button:last-child { opacity: 1; }
 
+/* content card */
+.thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.thumb { position: relative; padding: 0; border-radius: 10px; overflow: hidden; background: var(--ink-10); }
+.thumb img { display: block; width: 100%; aspect-ratio: 16/10; object-fit: cover; }
+.thumb span { position: absolute; left: 8px; bottom: 8px; background: rgba(20,20,15,.8); color: var(--paper); font-size: 12px; padding: 2px 8px; border-radius: 999px; }
+.copyblocks { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; border-top: 1px solid var(--ink-10); padding-top: 10px; }
+.copyblock .lbl { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--ink-60); margin-bottom: 4px; }
+.copyblock .lbl button { padding: 3px 10px; font-size: 12px; }
+.copyblock pre { margin: 0; white-space: pre-wrap; font: inherit; font-size: 13px; line-height: 1.45; background: var(--ink-5); border-radius: 10px; padding: 10px 12px; max-height: 180px; overflow: auto; user-select: text; }
+
 /* transcript */
 .transcript .sentences { display: flex; flex-direction: column; max-height: 260px; overflow: auto; border-top: 1px solid var(--ink-10); padding-top: 8px; }
 .sentence { display: grid; grid-template-columns: 70px 1fr auto; gap: 12px; align-items: center; padding: 5px 6px; border-radius: 8px; font-size: 14px; line-height: 1.4; }

@@ -207,6 +207,8 @@ export interface NarrateApi {
   transcribeProject(dir: string): Promise<Transcript>
   /** Render one asset of the recording; `suffix` names the output file (`<stamp>-<suffix>.mp4`). */
   exportProject(dir: string, config: RenderConfig, cuts: Cut[], suffix?: string, format?: ExportFormat, extra?: MasterExtras): Promise<string>
+  /** Thumbnail candidates at the given output seconds → PNG paths plus http URLs for display. */
+  renderThumbnails(dir: string, config: RenderConfig, cuts: Cut[], timesOut: number[], extra?: MasterExtras): Promise<{ path: string; url: string }[]>
   onExportProgress(cb: (p: ExportProgress) => void): () => void
   reveal(path: string): Promise<void>
   trashProject(dir: string): Promise<void>

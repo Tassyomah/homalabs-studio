@@ -9,6 +9,8 @@ import { Timeline, fmt } from './Timeline'
 import { Director, type DirectorState, type DirectorStatus } from './Director'
 import { TranscriptPanel, fillerRanges, type TranscribeStatus } from './TranscriptPanel'
 import { ContentMap } from './ContentMap'
+import { ContentCard } from './ContentCard'
+import { buildContent, thumbnailTimes } from '../content'
 import { generateAssets } from '../generate'
 
 const FPS = 60
@@ -112,6 +114,16 @@ export function Editor({ project }: { project: Project }) {
     return { ...analysis, proposals, summary: { ...analysis.summary, REMOVE: proposals.filter((p) => p.type === 'REMOVE').length,
       removableSeconds: Math.round(proposals.filter((p) => p.type === 'REMOVE').reduce((s, p) => s + p.end - p.start, 0) * 100) / 100 } }
   }, [analysis, transcript])
+  // Content (add-on §13): copy from the transcript + chapters; thumbnails rendered from the polished master on request.
+  const [thumbs, setThumbs] = useState<{ path: string; url: string }[]>([])
+  const [thumbStatus, setThumbStatus] = useState<'idle' | 'running' | string>('idle')
+  const makeThumbs = () => {
+    setThumbStatus('running')
+    const times = thumbnailTimes(project.events, edits.cuts, speeds, chapters, highlights, analysis)
+    window.narrate.renderThumbnails(project.dir, edits.config, edits.cuts, times, { zooms, speeds, masks })
+      .then((t) => { setThumbs(t); setThumbStatus('idle') })
+      .catch((e: Error) => setThumbStatus(e.message))
+  }
   const removeSentence = (s: TranscriptSegment) => setCuts((c) => [...c, [s.start, s.end]])
   const restoreSentence = (s: TranscriptSegment) => setCuts((c) => c.filter(([a, b]) => !(a <= s.start + 0.05 && b >= s.end - 0.05)))
 
@@ -289,6 +301,8 @@ export function Editor({ project }: { project: Project }) {
             ))}
           </div>
         )}
+        {!asset && <ContentCard content={buildContent(transcript, chapters, keptDuration(project.events, edits.cuts, speeds))} thumbs={thumbs} thumbStatus={thumbStatus}
+          onMakeThumbs={makeThumbs} onReveal={(p) => window.narrate.reveal(p)} revealLabel={revealLabel} hasTranscript={!!transcript} />}
         {!asset && (chapters.length > 0 || transcript) && (
           <ContentMap chapters={chapters} transcript={transcript} duration={dur} playhead={playheadSrc} onSeek={seekSrc}
             onRename={(i, title) => apply((ed) => ({ ...ed, chapters: ed.chapters.map((x, k) => k === i ? { ...x, title } : x) }))}

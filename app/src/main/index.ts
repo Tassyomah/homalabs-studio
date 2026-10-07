@@ -6,7 +6,7 @@ import { homedir } from 'node:os'
 import type { Analysis, Cut, Devices, ExportFormat, ExportProgress, MasterExtras, Project, ProjectFile, RecorderEvent, RenderConfig, StartOptions, Transcript, UnfinishedRecording } from '../shared/types'
 import { Recorder } from './recorder'
 import { AssetServer } from './assetServer'
-import { exportProject } from './exporter'
+import { exportProject, renderThumbnails } from './exporter'
 
 const IS_WIN = process.platform === 'win32'
 const APP_ROOT = resolve(app.getAppPath())
@@ -213,6 +213,11 @@ app.whenReady().then(async () => {
     const p = loadProject(dir); if (!p) throw new Error('project not found')
     const send = (prog: ExportProgress) => win?.webContents.send('export:progress', prog)
     return exportProject(APP_ROOT, p, config, cuts, send, suffix, format, join(RESOURCES, 'remotion'), extra)
+  })
+  ipcMain.handle('project:thumbnails', async (_e, dir: string, config: RenderConfig, cuts: Cut[] = [], timesOut: number[], extra?: MasterExtras) => {
+    const p = loadProject(dir); if (!p) throw new Error('project not found')
+    const files = await renderThumbnails(APP_ROOT, p, config, cuts, timesOut.slice(0, 6), join(RESOURCES, 'remotion'), extra)
+    return files.map((f) => ({ path: f, url: server.url(f) + `?v=${Date.now()}` }))
   })
   // Developer aid: NARRATE_EXPORT_ON_OPEN=1 with NARRATE_OPEN=<dir> exports that recording's master (as "packaged-test") and quits —
   // used to verify an installed build end to end without clicking.
