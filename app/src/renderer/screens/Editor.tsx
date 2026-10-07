@@ -336,6 +336,11 @@ export function Editor({ project }: { project: Project }) {
           <input type="range" min={0} max={64} step={2} value={config.radius} onChange={(e) => set('radius', Number(e.target.value))} /></div>
         <div className="control"><div className="lbl"><span>Cursor size</span><span>{config.cursorScale.toFixed(1)}×</span></div>
           <input type="range" min={1} max={3} step={0.1} value={config.cursorScale} onChange={(e) => set('cursorScale', Number(e.target.value))} /></div>
+        {!!project.events.keys?.length && <div className="control"><div className="lbl"><span>Keyboard shortcuts</span><span>{project.events.keys.length} pressed</span></div>
+          <div className="seg">
+            <button className={config.keycaps ? 'on' : ''} onClick={() => set('keycaps', true)}>Show keycaps</button>
+            <button className={!config.keycaps ? 'on' : ''} onClick={() => set('keycaps', false)}>Hide</button>
+          </div></div>}
         <div className="control"><div className="lbl"><span>Background</span></div>
           <div className="seg">{BGS.map((b) => (
             <button key={b.id} className={config.background === b.id ? 'on' : ''} onClick={() => set('background', b.id)}>

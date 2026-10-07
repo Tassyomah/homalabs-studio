@@ -91,6 +91,7 @@ const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: Projec
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: cfg.cameraMirror ? 'scaleX(-1)' : undefined }} />
         </div>
       )}
+      {cfg.keycaps && ev.keys && ev.keys.length > 0 && <Keycaps keys={ev.keys} t={t} t0={ev.t0Video} F={F} />}
       {transcript && cfg.captions !== 'off' && (
         <div style={{ position: 'absolute', left: F.x, top: F.y, width: F.w, height: F.h, pointerEvents: 'none' }}>
           <Captions transcript={transcript} t={t} style={cfg.captions} FW={F.w} FH={F.h} portrait={L.vp.crop} />
@@ -99,6 +100,25 @@ const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: Projec
       {assets.mic && cfg.micVolume > 0 && <TimedAudio src={cfg.voice === 'clean' && assets.micClean ? assets.micClean : assets.mic} start={micStart} fps={fps} volume={cfg.micVolume} rate={rate} />}
       {assets.system && cfg.systemVolume > 0 && <TimedAudio src={assets.system} start={sysStart} fps={fps} volume={cfg.systemVolume} rate={rate} />}
     </>
+  )
+}
+
+/** Keyboard shortcut keycaps (spec §46): the most recent combo, bottom-left of the frame, fading after 1.4 s. */
+const Keycaps: React.FC<{ keys: { t: number; keys: string }[]; t: number; t0: number; F: { x: number; y: number; w: number; h: number } }> = ({ keys, t, t0, F }) => {
+  let shown: { t: number; keys: string } | null = null
+  for (const k of keys) { const rel = k.t - t0; if (rel <= t && t - rel < 1.4) shown = k; else if (rel > t) break }
+  if (!shown) return null
+  const age = t - (shown.t - t0)
+  const alpha = age < 0.1 ? age / 0.1 : age > 1.1 ? Math.max(0, (1.4 - age) / 0.3) : 1
+  const size = Math.round(F.w * 0.018)
+  return (
+    <div style={{ position: 'absolute', left: F.x + Math.round(F.w * 0.03), top: F.y + F.h - Math.round(F.h * 0.06) - size * 2.4, display: 'flex', gap: size * 0.4, opacity: alpha,
+                  transform: `translateY(${(1 - Math.min(1, age / 0.1)) * 8}px)`, pointerEvents: 'none' }}>
+      {shown.keys.split('+').map((k, i) => (
+        <span key={i} style={{ fontFamily: 'Aeonik, Archivo, Inter, system-ui, sans-serif', fontWeight: 600, fontSize: size, lineHeight: 1, color: '#14140F',
+          background: '#EFEEE8', borderRadius: size * 0.45, padding: `${size * 0.55}px ${size * 0.8}px`, boxShadow: `0 ${size * 0.25}px 0 rgba(20,20,15,0.25), 0 ${size * 0.6}px ${size * 1.2}px rgba(20,20,15,0.25)`, minWidth: size * 1.2, textAlign: 'center' }}>{k}</span>
+      ))}
+    </div>
   )
 }
 

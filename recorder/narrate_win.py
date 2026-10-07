@@ -312,8 +312,8 @@ class Journal:
     def close(self): self.flush(); self.fh.close()
 
 def read_journal(path):
-    moves, clicks, changes, cursors, pauses = [], [], [], {}, []
-    if not os.path.exists(path): return moves, clicks, changes, cursors, pauses
+    moves, clicks, changes, cursors, pauses, keys = [], [], [], {}, [], []
+    if not os.path.exists(path): return moves, clicks, changes, cursors, pauses, keys
     with open(path, encoding="utf-8") as fh:
         for line in fh:
             try: e = json.loads(line)
@@ -322,10 +322,54 @@ def read_journal(path):
             if k == "m": moves.extend(d)
             elif k == "c": clicks.append(d)
             elif k == "s": changes.append(d)
+            elif k == "k": keys.append(d)
             elif k == "cur": cursors[d["id"]] = d["shape"]
             elif k == "pause": pauses.append([d, None])
             elif k == "resume" and pauses and pauses[-1][1] is None: pauses[-1][1] = d
-    return moves, clicks, changes, cursors, pauses
+    return moves, clicks, changes, cursors, pauses, keys
+
+class KeyLog:
+    """Keyboard *shortcuts* only (spec §20, §46): a low-level hook records combos with Ctrl / Alt / Win held and function
+    keys, never plain typing — so a password typed during a recording is not in the log. Runs its own message loop."""
+    MODS = {0xA2: "Ctrl", 0xA3: "Ctrl", 0x11: "Ctrl", 0xA0: "Shift", 0xA1: "Shift", 0x10: "Shift", 0xA4: "Alt", 0xA5: "Alt", 0x12: "Alt", 0x5B: "Win", 0x5C: "Win"}
+    NAMES = {0x08: "Backspace", 0x09: "Tab", 0x0D: "Enter", 0x1B: "Esc", 0x20: "Space", 0x21: "PgUp", 0x22: "PgDn", 0x23: "End", 0x24: "Home",
+             0x25: "←", 0x26: "↑", 0x27: "→", 0x28: "↓", 0x2E: "Del", 0xBB: "=", 0xBD: "-", 0xC0: "`", 0xBF: "/", 0xBC: ",", 0xBE: ".", 0xDB: "[", 0xDD: "]"}
+    def __init__(self, journal):
+        self.keys = []; self.journal = journal; self.down = set(); self.tid = None
+        self._proc = None; self._hook = None
+    def name(self, vk):
+        if vk in self.NAMES: return self.NAMES[vk]
+        if 0x70 <= vk <= 0x87: return f"F{vk - 0x6F}"
+        if 0x30 <= vk <= 0x5A: return chr(vk)
+        return None
+    def run(self):
+        user32.SetWindowsHookExW.restype = ctypes.c_void_p
+        user32.CallNextHookEx.argtypes = [ctypes.c_void_p, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+        user32.CallNextHookEx.restype = ctypes.c_ssize_t
+        class KBDLLHOOKSTRUCT(ctypes.Structure): _fields_ = [("vkCode", wintypes.DWORD), ("scanCode", wintypes.DWORD), ("flags", wintypes.DWORD), ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_void_p)]
+        HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+        def proc(code, wparam, lparam):
+            if code >= 0:
+                vk = ctypes.cast(lparam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents.vkCode
+                if wparam in (0x100, 0x104):                           # WM_KEYDOWN / WM_SYSKEYDOWN
+                    if vk in self.MODS: self.down.add(self.MODS[vk])
+                    else:
+                        n = self.name(vk)
+                        mods = [m for m in ("Ctrl", "Alt", "Win", "Shift") if m in self.down]
+                        if n and (mods and mods != ["Shift"] or n.startswith("F") and len(n) <= 3 or n in ("Esc", "PgUp", "PgDn", "Home", "End")):
+                            k = {"t": round(now(), 4), "keys": "+".join(mods + [n])}
+                            self.keys.append(k); self.journal.add("k", k)
+                elif wparam in (0x101, 0x105) and vk in self.MODS: self.down.discard(self.MODS[vk])
+            return user32.CallNextHookEx(None, code, wparam, lparam)
+        self._proc = HOOKPROC(proc)
+        self._hook = user32.SetWindowsHookExW(13, self._proc, None, 0)           # WH_KEYBOARD_LL
+        self.tid = ctypes.windll.kernel32.GetCurrentThreadId()
+        msg = wintypes.MSG()
+        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            user32.TranslateMessage(ctypes.byref(msg)); user32.DispatchMessageW(ctypes.byref(msg))
+        if self._hook: user32.UnhookWindowsHookEx(ctypes.c_void_p(self._hook))
+    def stop(self):
+        if self.tid: user32.PostThreadMessageW(self.tid, 0x0012, 0, 0)        # WM_QUIT
 
 class CursorLog:
     """Cursor position / buttons / shape by polling. No hooks, no extra permissions."""
@@ -580,6 +624,7 @@ def record(args):
 
     journal = Journal(os.path.join(outdir, "events.partial.jsonl"))
     cl = CursorLog(d, outdir, journal); th = threading.Thread(target=cl.run, daemon=True); th.start()
+    kl = KeyLog(journal); kth = threading.Thread(target=kl.run, daemon=True); kth.start()
     pauses = []
     emit(event="started", out=outdir, display=disp, tLaunch=t_launch, encoder=enc, capture=mode, mic=mic[0] if audio else None,
          camera=cam[0] if camera else None, systemAudio=bool(loopback), warning=warning)
@@ -618,7 +663,7 @@ def record(args):
         stopped.wait(0.05)
     t_end = now()
     if pauses and pauses[-1][1] is None: pauses[-1][1] = round(t_end, 4)
-    cl.stop.set(); th.join(timeout=1); journal.close()
+    cl.stop.set(); th.join(timeout=1); kl.stop(); kth.join(timeout=1); journal.close()
     video.stop()
     for c in (audio, camera):
         if c: c.stop()
@@ -626,14 +671,14 @@ def record(args):
         loopback.stop()
         if loopback.t0 is not None: setup["t0System"] = loopback.t0
     emit(event="stopped", out=outdir, duration=round(t_end - t_launch, 2))
-    finalize(outdir, setup, t_end, capture=mode, log_data=(cl.moves, cl.clicks, cl.cursorChanges, cl.cursors, pauses))
+    finalize(outdir, setup, t_end, capture=mode, log_data=(cl.moves, cl.clicks, cl.cursorChanges, cl.cursors, pauses, kl.keys))
 
 def finalize(outdir, setup, t_end, capture=None, log_data=None):
     """Turn the raw capture (screen.mkv, mic.mka, journal) into screen.mp4 / mic.wav / events.json.
     Used at the end of a normal recording and by `finalize` after a crash (then log_data comes from the journal)."""
     raw_video = os.path.join(outdir, "screen.mkv"); screen_path = os.path.join(outdir, "screen.mp4"); mic_path = os.path.join(outdir, "mic.mka")
     journal_path = os.path.join(outdir, "events.partial.jsonl")
-    moves, clicks, changes, cursors, pauses = log_data if log_data else read_journal(journal_path)
+    moves, clicks, changes, cursors, pauses, keys = log_data if log_data else read_journal(journal_path)
     if pauses and pauses[-1][1] is None: pauses[-1][1] = round(t_end, 4)
 
     emit(event="finalizing", step="video")
@@ -686,7 +731,7 @@ def finalize(outdir, setup, t_end, capture=None, log_data=None):
               "systemOffset": (t0s - t0v) if t0s is not None else None,
               "pauses": pauses, "platform": "win32", "encoder": setup.get("encoder"), "capture": capture,
               "recovered": log_data is None,
-              "cursors": cursors, "cursorChanges": changes, "moves": moves, "clicks": clicks, "scrolls": [],
+              "cursors": cursors, "cursorChanges": changes, "moves": moves, "clicks": clicks, "scrolls": [], "keys": keys,
               "files": {"screen": "screen.mp4", "mic": "mic.wav" if t0m is not None else None, "camera": "camera.mp4" if t0c is not None else None,
                         "system": "system.wav" if t0s is not None else None}}
     tmp = os.path.join(outdir, "events.json.tmp")

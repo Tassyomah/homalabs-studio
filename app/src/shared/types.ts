@@ -21,6 +21,8 @@ export interface RecordingEvents {
   moves: [number, number, number][]
   clicks: ClickEvent[]
   scrolls: unknown[]
+  /** Keyboard shortcuts only (combos with Ctrl/Alt/Win, function keys), host-clock seconds; never plain typing. */
+  keys?: { t: number; keys: string }[]
   micOffset: number | null
   pauses?: [number, number][]
   /** Camera (spec §10): its own file on the shared clock, composited at render time, never baked in. */
@@ -141,11 +143,12 @@ export interface RenderConfig {
   systemVolume: number  // 0..1.5, 0 = muted
   captions: CaptionStyle
   voice: 'raw' | 'clean' // 'clean' uses mic.clean.wav when it exists (spec §16); the raw track is always kept
+  keycaps: boolean      // show pressed shortcuts as keycaps (spec §46)
 }
 export const defaultConfig: RenderConfig = {
   aspect: 'source', zoom: 2, padding: 0.06, radius: 24, background: 'indigo', cursorScale: 1.6, outputHeight: 1080,
   cameraShape: 'circle', cameraSize: 0.2, cameraCorner: 'br', cameraMirror: true,
-  micVolume: 1, systemVolume: 0.8, captions: 'off', voice: 'raw',
+  micVolume: 1, systemVolume: 0.8, captions: 'off', voice: 'raw', keycaps: true,
 }
 
 export type ScreencastProps = { assets: ProjectAssets; events: RecordingEvents; config: RenderConfig; cuts?: Cut[]; zooms?: ManualZoom[]; speeds?: SpeedRange[]; masks?: Mask[]; transcript?: Transcript | null; [k: string]: unknown }

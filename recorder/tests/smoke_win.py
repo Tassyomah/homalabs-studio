@@ -38,6 +38,9 @@ u = ctypes.windll.user32; pt = wt.POINT(); u.GetCursorPos(ctypes.byref(pt)); x0,
 for i in range(60):
     u.SetCursorPos(x0 + (i % 20) * 3, y0 + (i % 10) * 2); time.sleep(0.03)
 u.SetCursorPos(x0, y0)
+# a harmless shortcut the key log should capture: Ctrl+Shift (held) + F13 (a key no app binds)
+for vk, up in ((0x11, False), (0x10, False), (0x7C, False), (0x7C, True), (0x10, True), (0x11, True)):
+    u.keybd_event(vk, 0, 2 if up else 0, 0); time.sleep(0.03)
 time.sleep(1.0); send("pause"); assert read_until("paused")["event"] == "paused"
 time.sleep(1.0); send("resume"); assert read_until("resumed")["event"] == "resumed"
 time.sleep(1.5); send("stop")
@@ -49,7 +52,8 @@ assert ev and ev["event"] == "ready", ev
 e = json.load(open(os.path.join(OUT, "events.json")))
 print("--- events.json ---")
 print(json.dumps({k: e[k] for k in ("display", "fps", "t0Video", "t0Mic", "videoDuration", "videoFrames", "micOffset", "pauses", "encoder", "files")}, indent=1))
-print("moves:", len(e["moves"]), "clicks:", len(e["clicks"]), "cursorChanges:", e["cursorChanges"][:3])
+print("moves:", len(e["moves"]), "clicks:", len(e["clicks"]), "cursorChanges:", e["cursorChanges"][:3], "keys:", e.get("keys"))
+assert any(k["keys"] == "Ctrl+Shift+F13" for k in e.get("keys", [])), "keyboard shortcut was not logged"
 print("cursors:", json.dumps(e["cursors"]))
 print("files:", {f: os.path.getsize(os.path.join(OUT, f)) for f in os.listdir(OUT) if os.path.isfile(os.path.join(OUT, f))})
 
