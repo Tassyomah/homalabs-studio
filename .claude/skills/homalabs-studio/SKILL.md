@@ -46,7 +46,8 @@ Test recording used for screenshots: `%USERPROFILE%\Videos\Narrate\zz-smoke-test
 5. ✅ Content map card, GIF export, Windows installer (`npm run dist` → `app/release/Narrate-Setup-*.exe`, per-user, unsigned; GitHub Actions builds it on push/tag).
 6. ✅ Manual zooms (Zoom here + level/hold), speed ranges (Speed from here…to here, 0.5–3×), SPEED proposals from the Smart Director. Installed on this laptop via the NSIS installer (Start menu "Narrate").
 7. ✅ Privacy masks (Mask here; blur / solid; sliders for box and end time).
-8. Next: thumbnails + social copy (add-on §13 "CONTENT"), remaining add-on sections (§19+ once she pastes them), bundling Python + ffmpeg into the installer, keyboard-shortcut keycaps (§46), drag-to-place for masks/zooms on the preview, macOS parity. The CI workflow file sits untracked until she runs `gh auth refresh -s workflow`.
+8. ✅ Content card: thumbnail candidates (renderStill) + title / description / LinkedIn copy from the transcript and chapters, with Copy buttons (`scripts/thumbs.ts` for the CLI).
+9. Next: remaining add-on sections (§19+ once she pastes them), bundling Python + ffmpeg into the installer, keyboard-shortcut keycaps (§46), drag-to-place for masks/zooms on the preview, audio normalisation (§16), macOS parity. The CI workflow file sits untracked until she runs `gh auth refresh -s workflow`. Rebuild + reinstall (`npm run dist`, then the setup exe with /S) so her installed app has the newest features — last installed build predates zooms/speeds/masks/content.
 Known limits of both interim recorders: control bar appears in the capture; no window/region; no system audio. Windows multi-monitor ddagrab index order is assumed, untested (one display here).
 
 ## On a new machine
