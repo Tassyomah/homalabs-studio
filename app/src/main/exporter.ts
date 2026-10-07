@@ -2,6 +2,7 @@ import { bundle } from '@remotion/bundler'
 import { renderMedia, selectComposition } from '@remotion/renderer'
 import { join } from 'node:path'
 import type { ExportProgress, Project, RenderConfig, ScreencastProps } from '../shared/types'
+import { outputSize } from '../video/Screencast'
 
 let bundlePromise: Promise<string> | null = null
 function getBundle(appRoot: string) {
@@ -14,12 +15,13 @@ export async function exportProject(appRoot: string, project: Project, config: R
     send({ stage: 'bundling', progress: 0 })
     const serveUrl = await getBundle(appRoot)
     const inputProps: ScreencastProps = { assets: project.assets, events: project.events, config }
-    const composition = await selectComposition({ serveUrl, id: 'Screencast', inputProps })
-    const scale = config.outputHeight ? config.outputHeight / composition.height : 1
+    const design = await selectComposition({ serveUrl, id: 'Screencast', inputProps })
+    // Render at an even integer size; the composition scales its design layout to whatever size it is given.
+    const composition = { ...design, ...outputSize(design, config.outputHeight) }
     const output = join(project.dir, `${project.name}-narrate.mp4`)
     send({ stage: 'rendering', progress: 0 })
     await renderMedia({
-      composition, serveUrl, codec: 'h264', outputLocation: output, inputProps, scale,
+      composition, serveUrl, codec: 'h264', outputLocation: output, inputProps,
       crf: 16, pixelFormat: 'yuv420p', audioBitrate: '320k',
       onProgress: ({ progress }) => send({ stage: 'rendering', progress }),
     })

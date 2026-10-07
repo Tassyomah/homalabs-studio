@@ -8,13 +8,15 @@ import { Recorder } from './recorder'
 import { AssetServer } from './assetServer'
 import { exportProject } from './exporter'
 
+const IS_WIN = process.platform === 'win32'
 const APP_ROOT = resolve(app.getAppPath())
-const RECORDER = resolve(APP_ROOT, '..', 'recorder', 'narrate.py')
-const RECORDINGS = join(homedir(), 'Movies', 'Narrate')
-const SETTINGS_URL = {
-  screen: 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
-  mic: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
-}
+/** One recorder per platform, same stdin/stdout protocol (docs/ARCHITECTURE.md). */
+const RECORDER = process.env.NARRATE_RECORDER ?? resolve(APP_ROOT, '..', 'recorder', IS_WIN ? 'narrate_win.py' : 'narrate.py')
+const RECORDINGS = join(homedir(), IS_WIN ? 'Videos' : 'Movies', 'Narrate')
+const SETTINGS_URL = IS_WIN
+  ? { screen: 'ms-settings:privacy', mic: 'ms-settings:privacy-microphone' }
+  : { screen: 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+      mic: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone' }
 
 let win: BrowserWindow | null = null
 let bar: BrowserWindow | null = null
@@ -30,7 +32,9 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1280, height: 820, minWidth: 980, minHeight: 640,
     title: 'Narrate', backgroundColor: '#EFEEE8',
-    titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 18 },
+    ...(IS_WIN
+      ? { titleBarStyle: 'hidden' as const, titleBarOverlay: { color: '#EFEEE8', symbolColor: '#14140F', height: 52 } }
+      : { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 18 } }),
     webPreferences: { preload: join(__dirname, '../preload/index.mjs'), sandbox: false },
   })
   win.webContents.on('console-message', (e) => { if (e.level === 'error' || e.level === 'warning') console.log('[renderer]', e.message) })

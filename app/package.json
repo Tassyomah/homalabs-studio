@@ -30,10 +30,13 @@
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^44.5.1",
     "electron-vite": "^5.0.0",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^7.3.7"
   },
   "allowScripts": {
-    "electron@44.5.1": true
+    "electron@44.5.1": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.1": true
   }
 }

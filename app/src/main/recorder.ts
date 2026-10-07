@@ -4,9 +4,13 @@ import type { Devices, Permissions, RecState, StartOptions } from '../shared/typ
 
 type RawEvent = { event: string; [k: string]: unknown }
 
+/** Interpreter for the Python recorders. Windows installs expose `python`; macOS ships `python3`. */
+const PYTHON = process.env.NARRATE_PYTHON ?? (process.platform === 'win32' ? 'python' : 'python3')
+const SPAWN = { windowsHide: true } as const
+
 /**
- * Drives the recorder sidecar (recorder/narrate.py today; the Swift/ScreenCaptureKit recorder later —
- * same line protocol). Emits 'event' with each JSON line the recorder prints.
+ * Drives the recorder sidecar (recorder/narrate.py on macOS, recorder/narrate_win.py on Windows; the
+ * Swift/ScreenCaptureKit recorder later — same line protocol). Emits 'event' with each JSON line the recorder prints.
  */
 export class Recorder extends EventEmitter {
   private proc: ChildProcess | null = null
@@ -18,10 +22,11 @@ export class Recorder extends EventEmitter {
 
   private run(args: string[]): Promise<string> {
     return new Promise((res, rej) => {
-      const p = spawn('python3', [this.script, ...args])
+      const p = spawn(PYTHON, [this.script, ...args], SPAWN)
       let out = '', err = ''
       p.stdout.on('data', (d) => (out += d)); p.stderr.on('data', (d) => (err += d))
-      p.on('close', (code) => (code === 0 ? res(out) : rej(new Error(err || `recorder exited ${code}`))))
+      p.on('error', (e) => rej(new Error(friendlySpawnError(e))))
+      p.on('close', (code) => (code === 0 ? res(out) : rej(new Error(friendlyExit(err, code)))))
     })
   }
   listDevices(): Promise<Devices> { return this.run(['--list']).then(JSON.parse) }
@@ -32,9 +37,10 @@ export class Recorder extends EventEmitter {
     const args = [this.script, 'record', '--out', opts.out, '--fps', String(opts.fps), '--screen', String(opts.screen)]
     if (opts.mic === null) args.push('--no-mic'); else args.push('--mic', String(opts.mic))
     return new Promise((res, rej) => {
-      const p = spawn('python3', args, { stdio: ['pipe', 'pipe', 'pipe'] })
+      const p = spawn(PYTHON, args, { stdio: ['pipe', 'pipe', 'pipe'], ...SPAWN })
       this.proc = p
       let settled = false, buf = ''
+      p.on('error', (e) => { this.proc = null; if (!settled) { settled = true; rej(new Error(friendlySpawnError(e))) } })
       p.stderr.on('data', (d) => console.log('[recorder]', String(d).trim()))
       p.stdout.on('data', (d) => {
         buf += d
@@ -71,4 +77,15 @@ export class Recorder extends EventEmitter {
   resume() { if (this.state === 'paused') this.send('resume') }
   stop() { if (this.state === 'recording' || this.state === 'paused') this.send('stop') }
   kill() { this.proc?.kill('SIGTERM') }
+}
+
+const PYTHON_HELP = process.platform === 'win32'
+  ? 'Narrate needs Python 3 to drive the recorder. Install it with `winget install Python.Python.3.12`, then reopen Narrate.'
+  : 'Narrate needs python3 to drive the recorder. Install the Xcode command line tools, then reopen Narrate.'
+function friendlySpawnError(e: NodeJS.ErrnoException) {
+  return e.code === 'ENOENT' ? PYTHON_HELP : e.message
+}
+function friendlyExit(stderr: string, code: number | null) {
+  if (/Python was not found/i.test(stderr) || code === 9009) return PYTHON_HELP
+  return stderr.trim() || `recorder exited ${code}`
 }

@@ -23,6 +23,9 @@ export interface RecordingEvents {
   scrolls: unknown[]
   micOffset: number | null
   pauses?: [number, number][]
+  /** Set by recorder/narrate_win.py; absent on macOS recordings. */
+  platform?: Platform
+  encoder?: string
   files: { screen: string; mic: string | null }
 }
 
@@ -68,8 +71,11 @@ export interface Devices {
 export interface StartOptions { screen: number; mic: number | null; fps: number }
 export interface ExportProgress { progress: number; stage: 'bundling' | 'rendering' | 'done' | 'error'; message?: string; output?: string }
 
+export type Platform = 'darwin' | 'win32' | 'linux'
+
 /** The API exposed to the renderer by preload. */
 export interface NarrateApi {
+  platform: Platform
   listDevices(): Promise<Devices>
   checkPermissions(request: boolean): Promise<Permissions>
   openSettings(which: 'screen' | 'mic'): Promise<void>

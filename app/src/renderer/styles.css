@@ -12,6 +12,8 @@ body { font-family: Aeonik, Archivo, -apple-system, system-ui, sans-serif; backg
 
 .shell { display: flex; flex-direction: column; height: 100%; }
 .titlebar { height: 52px; display: flex; align-items: center; padding: 0 20px 0 88px; gap: 14px; }
+/* Windows draws its caption buttons at the top right (titleBarOverlay); macOS has traffic lights at the left. */
+body.win .titlebar { padding: 0 150px 0 24px; }
 .titlebar .brand { font-weight: 600; letter-spacing: -0.01em; }
 .titlebar .crumb { color: var(--ink-60); }
 .titlebar .spacer { flex: 1; }

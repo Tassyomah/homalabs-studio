@@ -1,6 +1,6 @@
 import http from 'node:http'
 import { createReadStream, statSync, existsSync } from 'node:fs'
-import { resolve, extname } from 'node:path'
+import { resolve, extname, relative, sep } from 'node:path'
 import type { AddressInfo } from 'node:net'
 
 const TYPES: Record<string, string> = { '.mp4': 'video/mp4', '.wav': 'audio/wav', '.png': 'image/png', '.json': 'application/json' }
@@ -14,7 +14,8 @@ export class AssetServer {
       const srv = http.createServer((req, rsp) => {
         const rel = decodeURIComponent((req.url ?? '/').split('?')[0])
         const file = resolve(root, '.' + rel)
-        if (!file.startsWith(root) || !existsSync(file) || statSync(file).isDirectory()) { rsp.writeHead(404); return rsp.end() }
+        const inside = relative(root, file)
+        if (!inside || inside.startsWith('..') || !existsSync(file) || statSync(file).isDirectory()) { rsp.writeHead(404); return rsp.end() }
         const size = statSync(file).size
         const type = TYPES[extname(file)] ?? 'application/octet-stream'
         const range = /bytes=(\d*)-(\d*)/.exec(req.headers.range ?? '')
@@ -32,8 +33,9 @@ export class AssetServer {
     })
   }
 
+  /** Path → URL. Splits on the OS separator so Windows backslashes become URL segments. */
   url(absPath: string): string {
-    const rel = resolve(absPath).slice(this.root.length).split('/').map(encodeURIComponent).join('/')
-    return `http://127.0.0.1:${this.port}${rel}`
+    const rel = relative(this.root, resolve(absPath)).split(sep).map(encodeURIComponent).join('/')
+    return `http://127.0.0.1:${this.port}/${rel}`
   }
 }

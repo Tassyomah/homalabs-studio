@@ -4,8 +4,11 @@ import { Home } from './screens/Home'
 import { Recording } from './screens/Recording'
 import { Editor } from './screens/Editor'
 import { ControlBar } from './screens/ControlBar'
+import { isWin } from './platform'
 
 type Screen = { name: 'home' } | { name: 'recording' } | { name: 'editor'; project: Project }
+
+document.body.classList.add(isWin ? 'win' : 'mac')
 
 export function App() {
   if (window.location.hash === '#bar') return <ControlBar />
