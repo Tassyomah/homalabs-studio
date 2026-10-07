@@ -39,6 +39,9 @@ export function buildCamera(ev: RecordingEvents, cfg: RenderConfig, vp: Viewport
   if (z > 1.001) {
     const downs: Pt[] = ev.clicks.filter((c) => c.type === 'down').map((c) => ({ t: c.t - ev.t0Video, x: c.x, y: c.y }))
       .filter((c) => c.t >= 0 && c.t <= ev.videoDuration)
+      // Add-on §10: a click is worth a zoom when the cursor settled on its target first. Clicks made while the cursor
+      // was still travelling fast (drag-through, flicking between windows) are skipped.
+      .filter((c) => { const p = rawCursor(ev, c.t - 0.35); return !p || Math.hypot(p[0] - c.x, p[1] - c.y) < 0.18 * W })
     for (const c of downs) {
       const g = groups[groups.length - 1]
       const last = g?.clicks[g.clicks.length - 1]
@@ -64,7 +67,10 @@ export function buildCamera(ev: RecordingEvents, cfg: RenderConfig, vp: Viewport
     const first = g.clicks[0], last = g.clicks[g.clicks.length - 1]
     const start = Math.max(0, first.t - LEAD), end = Math.min(ev.videoDuration, last.t + g.tail)
     const [cx0, cy0] = clampCenter(first.x, first.y, zoomed, W, H, vp)
-    if (start - prevEnd < 0.8 && keys.length && start > keys[keys.length - 2].t) {
+    // Nearby follow-up within a few seconds: pan instead of zooming out and back in (add-on §10: no rapid in/out).
+    const prevKey = keys[keys.length - 1]
+    const nearPrev = prevKey ? Math.hypot(prevKey.cx - cx0, prevKey.cy - cy0) < 0.3 * W : false
+    if (keys.length && start > keys[keys.length - 2].t && (start - prevEnd < 0.8 || (start - prevEnd < 3.0 && nearPrev))) {
       // adjacent group: stay zoomed and pan instead of zooming out and back in
       keys.splice(-1, 1)   // drop previous zoom-out
       keys.push({ t: Math.max(keys[keys.length - 1].t + 0.05, Math.min(start + EASE, first.t)), scale: zoomed, cx: cx0, cy: cy0 })
