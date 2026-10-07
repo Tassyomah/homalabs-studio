@@ -200,7 +200,6 @@ app.whenReady().then(async () => {
     if (!dir.startsWith(RECORDINGS) || !existsSync(join(dir, 'events.json'))) throw new Error('not a recording folder')
     const file = join(dir, 'analysis.json')
     if (force || !existsSync(file)) {
-      if (!IS_WIN) throw new Error('Smart Director analysis is not available on macOS yet.')
       analyzing ??= recorder.analyze(dir).finally(() => { analyzing = null })
       await analyzing
     }
@@ -209,7 +208,6 @@ app.whenReady().then(async () => {
   let transcribing: Promise<void> | null = null
   ipcMain.handle('project:transcribe', async (_e, dir: string): Promise<Transcript> => {
     if (!dir.startsWith(RECORDINGS) || !existsSync(join(dir, 'events.json'))) throw new Error('not a recording folder')
-    if (!IS_WIN) throw new Error('Transcription is not available on macOS yet.')
     transcribing ??= recorder.transcribe(dir).finally(() => { transcribing = null })
     await transcribing
     return JSON.parse(readFileSync(join(dir, 'transcript.json'), 'utf8'))
@@ -221,7 +219,6 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('project:enhance', async (_e, dir: string): Promise<Project> => {
     if (!dir.startsWith(RECORDINGS) || !existsSync(join(dir, 'events.json'))) throw new Error('not a recording folder')
-    if (!IS_WIN) throw new Error('Voice clean-up is not available on macOS yet.')
     await recorder.enhance(dir)
     const p = loadProject(dir); if (!p) throw new Error('project not found')
     return p

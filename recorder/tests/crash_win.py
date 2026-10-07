@@ -37,7 +37,8 @@ e = json.load(open(os.path.join(OUT, "events.json")))
 print("recovered:", e["recovered"], "dur", e["videoDuration"], "frames", e["videoFrames"], "moves", len(e["moves"]),
       "pauses", len(e["pauses"]), "mic", e["files"]["mic"], "micOffset", e["micOffset"])
 assert e["recovered"] and e["videoDuration"] > 2 and len(e["pauses"]) == 1 and e["cursors"]
-assert all(e["t0Video"] - 0.5 <= m[0] <= e["t0Video"] + e["videoDuration"] + 0.5 for m in e["moves"]), "clock mismatch"
+# a hard kill loses whatever ffmpeg had not flushed yet (≤ ~1.5 s with 1 s clusters); the log may run past the video by that much
+assert all(e["t0Video"] - 0.5 <= m[0] <= e["t0Video"] + e["videoDuration"] + 2.0 for m in e["moves"]), "clock mismatch"
 print("files after recovery:", sorted(os.listdir(OUT)))
 shutil.rmtree(OUT)
 print("OK")

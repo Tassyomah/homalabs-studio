@@ -21,7 +21,8 @@ Spec: `docs/SPEC.md` (governing). This file records how the code is shaped to me
 ## Modules
 | area (spec §99) | where |
 |---|---|
-| capture (macOS) | `recorder/narrate.py` (ffmpeg avfoundation + PyObjC cursor log). Swift/ScreenCaptureKit replacement in `recorder/swift/`, same protocol. |
+| shared recorder code | `recorder/common.py`: tool discovery, process helpers, crash journal, `finalize`/`recover`, Smart Director `analyze`, `enhance`, `transcribe`, mic `meter_loop`. Both platform recorders import it, so the intelligence layer is identical on Windows and macOS. |
+| capture (macOS) | `recorder/narrate.py` (ffmpeg avfoundation + PyObjC): screen, mic, camera (separate ffmpeg), cursor log, shortcut log via Quartz event tap, Matroska + journal for recovery. Ported from the Windows recorder on 2026-10-07 and **untested on a Mac until run there**. System audio needs ScreenCaptureKit (`recorder/swift/`). |
 | capture (Windows) | `recorder/narrate_win.py` (ffmpeg ddagrab → gdigrab fallback, dshow mic, Win32 cursor log; standard library only). Smoke test: `recorder/tests/smoke_win.py`. |
 | media / storage | project folder `~/Movies/Narrate/<stamp>/` (Windows: `~/Videos/Narrate/`): `screen.mp4`, `mic.wav`, `camera.mp4` (optional), `events.json`, `cursors/`. Raw media is never modified after finalisation. |
 | system audio (Windows) | `recorder/win_loopback.py`: WASAPI loopback of the default output via ctypes/raw COM, float32 WAV, silence gaps filled from the device position so sample N is always at `t0System + N/rate`. Converted to `system.wav` at finalisation; mixed in the composition with its own volume. |

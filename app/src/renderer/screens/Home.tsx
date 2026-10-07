@@ -34,7 +34,7 @@ export function Home({ projects, onOpen, onChanged, lastError }: {
 
   // Live input level for the selected microphone while idle on this screen (spec §14).
   useEffect(() => {
-    if (mic === null || phase.kind !== 'idle' || !isWin) { setLevel(0); return }
+    if (mic === null || phase.kind !== 'idle') { setLevel(0); return }
     window.narrate.startMicMeter(mic)
     const off = window.narrate.onMicLevel(setLevel)
     return () => { off(); window.narrate.stopMicMeter(); setLevel(0) }
@@ -120,7 +120,7 @@ export function Home({ projects, onOpen, onChanged, lastError }: {
             {devices?.mics.map((m) => <option key={m.index} value={m.index}>{m.name}</option>)}
           </select>
           {devices && devices.mics.length === 0 && <span className="note">No microphone detected.</span>}
-          {mic !== null && isWin && <div className="meter" title="Microphone level"><i style={{ width: `${Math.round(level * 100)}%` }} /></div>}</div>
+          {mic !== null && <div className="meter" title="Microphone level"><i style={{ width: `${Math.round(level * 100)}%` }} /></div>}</div>
         {devices?.cameras && devices.cameras.length > 0 && (
           <div className="field"><label>Camera</label>
             <select value={camera ?? ''} onChange={(e) => setCamera(e.target.value === '' ? null : Number(e.target.value))}>

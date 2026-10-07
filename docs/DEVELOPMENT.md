@@ -51,7 +51,7 @@ Hardware encoders are probed in order NVENC → Quick Sync → AMF → libx264; 
 pip3 install --user pyobjc-core==10.3.2 pyobjc-framework-Cocoa==10.3.2 pyobjc-framework-Quartz==10.3.2
 cd app && npm install && npm run dev
 ```
-Grant Screen Recording and Microphone to the app on first run, then reopen it. Recordings go to `~/Movies/Narrate/`.
+Grant Screen Recording and Microphone to the app on first run, then reopen it; Input Monitoring lets the recorder log keyboard shortcuts for keycaps. Recordings go to `~/Movies/Narrate/`. The Python recorder was ported from the Windows one and has not been run on a Mac yet — run `python3 recorder/narrate.py --list` and a short recording first and fix what breaks.
 With Xcode installed, build the ScreenCaptureKit recorder with `make` in `recorder/swift` and point `RECORDER` at it.
 
 ## Installer (Windows)
