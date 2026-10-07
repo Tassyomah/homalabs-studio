@@ -54,6 +54,13 @@ cd app && npm install && npm run dev
 Grant Screen Recording and Microphone to the app on first run, then reopen it. Recordings go to `~/Movies/Narrate/`.
 With Xcode installed, build the ScreenCaptureKit recorder with `make` in `recorder/swift` and point `RECORDER` at it.
 
+## Installer (Windows)
+```powershell
+cd app; npm run dist          # electron-vite build → remotion bundle (out/remotion) → electron-builder NSIS → app/release/Narrate-Setup-<version>.exe
+```
+The installer is per-user (no admin) and unsigned for now (`signAndEditExecutable: false`, so no code-signing tooling is needed to build). The installed app ships the recorder scripts and the pre-bundled composition under `resources/`, and Remotion downloads its headless browser into `%APPDATA%\Narrate\.remotion` on the first export. Users still need Python 3 and ffmpeg (both `winget install`, per-user); the app says so in plain words when they are missing.
+Verify an installed build without clicking: `NARRATE_OPEN=<recording dir>` + `NARRATE_EXPORT_ON_OPEN=1` exports that recording at 480p as `<stamp>-packaged-test.mp4` and quits.
+
 ## Export
 Export renders the same Remotion composition the editor previews (`app/src/video`). The first export downloads
 Remotion's headless Chrome (needs internet once). Output lands next to the recording as `<stamp>-narrate.mp4`.

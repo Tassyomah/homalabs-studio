@@ -2,6 +2,7 @@ recordings/
 capture/.build/
 node_modules/
 out/
+release/
 .DS_Store
 __pycache__/
 *.pyc

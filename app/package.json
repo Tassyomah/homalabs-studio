@@ -1,5 +1,6 @@
 {
   "name": "narrate",
+  "productName": "Narrate",
   "version": "0.1.0",
   "description": "Record your screen, narrate it afterwards. Open-source Screen Studio / Loom alternative.",
   "main": "out/main/index.js",
@@ -7,13 +8,28 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "bundle:video": "remotion bundle src/video/index.ts --out-dir out/remotion --log error",
+    "dist": "npm run build && npm run bundle:video && electron-builder --win nsis --publish never",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [],
-  "author": "",
+  "author": "Homalabs",
   "license": "MIT",
   "type": "module",
+  "build": {
+    "appId": "com.homalabs.narrate",
+    "productName": "Narrate",
+    "directories": { "output": "release" },
+    "files": ["out/main/**", "out/preload/**", "out/renderer/**", "package.json"],
+    "extraResources": [
+      { "from": "../recorder", "to": "recorder", "filter": ["**/*.py"] },
+      { "from": "out/remotion", "to": "remotion" }
+    ],
+    "asarUnpack": ["node_modules/@remotion/**"],
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "signAndEditExecutable": false },
+    "nsis": { "oneClick": true, "perMachine": false, "artifactName": "Narrate-Setup-${version}.${ext}" }
+  },
   "dependencies": {
     "@remotion/bundler": "^4.0.533",
     "@remotion/cli": "^4.0.533",
@@ -29,6 +45,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
@@ -37,6 +54,8 @@
   "allowScripts": {
     "electron@44.5.1": true,
     "esbuild@0.25.12": true,
-    "esbuild@0.28.1": true
+    "esbuild@0.28.1": true,
+    "electron-builder@26.15.3": true,
+    "electron-winstaller@5.4.0": true
   }
 }

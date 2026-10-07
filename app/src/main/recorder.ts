@@ -1,11 +1,32 @@
 import { spawn, ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
+import { existsSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Devices, Permissions, RecState, StartOptions } from '../shared/types'
 
 type RawEvent = { event: string; [k: string]: unknown }
 
-/** Interpreter for the Python recorders. Windows installs expose `python`; macOS ships `python3`. */
-const PYTHON = process.env.NARRATE_PYTHON ?? (process.platform === 'win32' ? 'python' : 'python3')
+/**
+ * Interpreter for the Python recorders. On Windows, look in the usual per-user install folders before trusting PATH
+ * (a fresh install may not have refreshed PATH yet, and the Store stub in WindowsApps is not a real Python).
+ */
+function findPython(): string {
+  if (process.env.NARRATE_PYTHON) return process.env.NARRATE_PYTHON
+  if (process.platform !== 'win32') return 'python3'
+  const roots = [process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, 'Programs', 'Python'), 'C:\\Program Files', 'C:\\'].filter(Boolean) as string[]
+  const found: string[] = []
+  for (const root of roots) {
+    if (!existsSync(root)) continue
+    for (const d of readdirSync(root)) if (/^Python3\d+$/i.test(d) && existsSync(join(root, d, 'python.exe'))) found.push(join(root, d, 'python.exe'))
+  }
+  if (found.length) return found.sort().reverse()[0]   // newest version first
+  for (const dir of (process.env.PATH ?? '').split(';')) {
+    if (!dir || /WindowsApps/i.test(dir)) continue
+    const p = join(dir, 'python.exe'); if (existsSync(p)) return p
+  }
+  return 'python'
+}
+const PYTHON = findPython()
 const SPAWN = { windowsHide: true } as const
 
 /**

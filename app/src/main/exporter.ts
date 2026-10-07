@@ -4,8 +4,27 @@ import { join } from 'node:path'
 import { existsSync, readdirSync, unlinkSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
+import { createRequire } from 'node:module'
 import type { Cut, ExportFormat, ExportProgress, Project, RenderConfig, ScreencastProps } from '../shared/types'
 import { outputSize } from '../video/Screencast'
+
+/**
+ * Where Remotion's native binaries (compositor, its ffmpeg) live. Inside a packaged app they are unpacked next to the
+ * asar (electron-builder `asarUnpack`), but Remotion starts them with `spawn`, which Electron does not redirect out of
+ * the archive — so hand it the unpacked directory explicitly.
+ */
+function binariesDirectory(): string | undefined {
+  const req = createRequire(import.meta.url)
+  const names = [`@remotion/compositor-${process.platform}-${process.arch}-msvc`, `@remotion/compositor-${process.platform}-${process.arch}`,
+                 `@remotion/compositor-${process.platform}-${process.arch}-gnu`]
+  for (const n of names) {
+    try {
+      const dir = (req(n) as { dir: string }).dir
+      return dir.includes('app.asar') && !dir.includes('app.asar.unpacked') ? dir.replace('app.asar', 'app.asar.unpacked') : dir
+    } catch { /* not this platform's package */ }
+  }
+  return undefined
+}
 
 /** ffmpeg for the GIF pass: env override, then PATH, then the per-user WinGet install the recorder also uses. */
 export function findFfmpeg(): string | null {
@@ -34,25 +53,28 @@ function run(cmd: string, args: string[]): Promise<void> {
 }
 
 let bundlePromise: Promise<string> | null = null
-function getBundle(appRoot: string) {
+/** The Remotion bundle: pre-built at `prebuilt` in packaged installs (npm run bundle:video), built on first use in development. */
+function getBundle(appRoot: string, prebuilt?: string) {
+  if (prebuilt && existsSync(join(prebuilt, 'index.html'))) return Promise.resolve(prebuilt)
   bundlePromise ??= bundle({ entryPoint: join(appRoot, 'src/video/index.ts'), webpackOverride: (c) => c })
   return bundlePromise
 }
 
-export async function exportProject(appRoot: string, project: Project, config: RenderConfig, cuts: Cut[], send: (p: ExportProgress) => void, suffix = 'narrate', format: ExportFormat = 'mp4'): Promise<string> {
+export async function exportProject(appRoot: string, project: Project, config: RenderConfig, cuts: Cut[], send: (p: ExportProgress) => void, suffix = 'narrate', format: ExportFormat = 'mp4', prebuilt?: string): Promise<string> {
   const safe = suffix.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '') || 'narrate'
   try {
     send({ stage: 'bundling', progress: 0, suffix: safe })
-    const serveUrl = await getBundle(appRoot)
+    const serveUrl = await getBundle(appRoot, prebuilt)
     const inputProps: ScreencastProps = { assets: project.assets, events: project.events, config, cuts, transcript: project.transcript }
-    const design = await selectComposition({ serveUrl, id: 'Screencast', inputProps })
+    const binaries = binariesDirectory()
+    const design = await selectComposition({ serveUrl, id: 'Screencast', inputProps, binariesDirectory: binaries })
     // Render at an even integer size; the composition scales its design layout to whatever size it is given.
     // GIFs are capped at 480 on the short side (file size), MP4 follows the quality setting.
     const composition = { ...design, ...outputSize(design, format === 'gif' ? Math.min(480, config.outputHeight || 480) : config.outputHeight, config.aspect) }
     const mp4 = join(project.dir, format === 'gif' ? `${project.name}-${safe}.gif.tmp.mp4` : `${project.name}-${safe}.mp4`)
     send({ stage: 'rendering', progress: 0, suffix: safe })
     await renderMedia({
-      composition, serveUrl, codec: 'h264', outputLocation: mp4, inputProps,
+      composition, serveUrl, codec: 'h264', outputLocation: mp4, inputProps, binariesDirectory: binaries,
       crf: 16, pixelFormat: 'yuv420p', audioBitrate: '320k', muted: format === 'gif',
       onProgress: ({ progress }) => send({ stage: 'rendering', progress: format === 'gif' ? progress * 0.85 : progress, suffix: safe }),
     })

@@ -10,8 +10,12 @@ import { exportProject } from './exporter'
 
 const IS_WIN = process.platform === 'win32'
 const APP_ROOT = resolve(app.getAppPath())
+/** Packaged installs keep the recorder scripts and the pre-bundled composition in resources/ (see package.json "build"). */
+const RESOURCES = app.isPackaged ? process.resourcesPath : resolve(APP_ROOT, '..')
 /** One recorder per platform, same stdin/stdout protocol (docs/ARCHITECTURE.md). */
-const RECORDER = process.env.NARRATE_RECORDER ?? resolve(APP_ROOT, '..', 'recorder', IS_WIN ? 'narrate_win.py' : 'narrate.py')
+const RECORDER = process.env.NARRATE_RECORDER ?? join(RESOURCES, 'recorder', IS_WIN ? 'narrate_win.py' : 'narrate.py')
+// Remotion downloads its headless browser into <cwd>/.remotion; in a packaged app cwd must be somewhere writable.
+if (app.isPackaged) { try { process.chdir(app.getPath('userData')) } catch { /* keep the default */ } }
 const RECORDINGS = join(homedir(), IS_WIN ? 'Videos' : 'Movies', 'Narrate')
 const SETTINGS_URL = IS_WIN
   ? { screen: 'ms-settings:privacy', mic: 'ms-settings:privacy-microphone' }
@@ -208,8 +212,16 @@ app.whenReady().then(async () => {
   ipcMain.handle('project:export', async (_e, dir: string, config: RenderConfig, cuts: Cut[] = [], suffix?: string, format?: ExportFormat) => {
     const p = loadProject(dir); if (!p) throw new Error('project not found')
     const send = (prog: ExportProgress) => win?.webContents.send('export:progress', prog)
-    return exportProject(APP_ROOT, p, config, cuts, send, suffix, format)
+    return exportProject(APP_ROOT, p, config, cuts, send, suffix, format, join(RESOURCES, 'remotion'))
   })
+  // Developer aid: NARRATE_EXPORT_ON_OPEN=1 with NARRATE_OPEN=<dir> exports that recording's master (as "packaged-test") and quits —
+  // used to verify an installed build end to end without clicking.
+  if (process.env.NARRATE_EXPORT_ON_OPEN && process.env.NARRATE_OPEN) {
+    const p = loadProject(process.env.NARRATE_OPEN)
+    if (p) exportProject(APP_ROOT, p, { ...(await import('../shared/types')).defaultConfig, ...(p.file?.config ?? {}), outputHeight: 480 }, p.file?.cuts ?? [],
+      (prog) => console.log('[dev] export', prog.stage, Math.round(prog.progress * 100) + '%', prog.message ?? ''), 'packaged-test', 'mp4', join(RESOURCES, 'remotion'))
+      .then(() => app.quit(), (e) => { console.log('[dev] export failed', e.message); app.quit() })
+  }
   ipcMain.handle('shell:reveal', (_e, p: string) => shell.showItemInFolder(p))
   ipcMain.handle('project:trash', (_e, dir: string) => shell.trashItem(dir))
 
