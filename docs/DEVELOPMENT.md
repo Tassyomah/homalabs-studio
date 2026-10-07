@@ -34,6 +34,7 @@ python recorder\tests\smoke_win.py --camera  # same, plus the first camera (pick
 python recorder\tests\smoke_win.py --system-audio   # same, plus computer sound (WASAPI loopback; the test beeps so there is something to capture)
 python recorder\win_loopback.py out.wav 3    # loopback self-test: records 3 s with two beeps and prints the sync error
 python recorder\narrate_win.py analyze --out <dir>    # Smart Director: writes analysis.json (silences, scene changes, idle, click groups → proposals)
+python recorder\narrate_win.py transcribe --out <dir> [--model small.en]   # local Whisper → transcript.json; first run creates %LOCALAPPDATA%\Narrate\speech
 python recorder\tests\crash_win.py           # kills the recorder mid-recording, checks ffmpeg died with it, recovers
 python recorder\narrate_win.py meter         # microphone level lines until you press Ctrl-C
 python recorder\narrate_win.py finalize --out <dir>   # finish a recording whose recorder died (what the app's "Restore" does)
@@ -56,6 +57,9 @@ With Xcode installed, build the ScreenCaptureKit recorder with `make` in `record
 ## Export
 Export renders the same Remotion composition the editor previews (`app/src/video`). The first export downloads
 Remotion's headless Chrome (needs internet once). Output lands next to the recording as `<stamp>-narrate.mp4`.
+
+## GIF export
+`Export → Format → GIF` (or `npx tsx scripts/export.ts <dir> 480 --gif`): the composition is rendered muted, capped at 480 px on the short side, then ffmpeg makes a looping 15 fps GIF with a two-pass palette. Needs ffmpeg (found like the recorder finds it; `NARRATE_FFMPEG` overrides).
 
 ## Derivative assets from the command line
 ```powershell

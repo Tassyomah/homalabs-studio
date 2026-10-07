@@ -1,8 +1,9 @@
 import { AbsoluteFill, Audio, Img, OffthreadVideo, Sequence, useCurrentFrame, useVideoConfig } from 'remotion'
 import { useMemo } from 'react'
-import { ASPECTS, type RecordingEvents, type RenderConfig, type ScreencastProps, type ProjectAssets } from '../shared/types'
+import { ASPECTS, type RecordingEvents, type RenderConfig, type ScreencastProps, type ProjectAssets, type Transcript } from '../shared/types'
 import { buildCamera, cameraAt, cursorIdAt, smoothCursor, type CamKey, type Viewport } from './motion'
 import { keptRanges } from './ranges'
+import { Captions } from './Captions'
 
 const BACKGROUNDS: Record<string, string> = {
   indigo: 'linear-gradient(135deg, #6E71E8 0%, #8B78D6 100%)',
@@ -37,8 +38,8 @@ export function layout(ev: RecordingEvents, cfg: RenderConfig): Layout {
 }
 
 /** One kept range of the recording, rendered at source time = srcStart + local frame. */
-const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: ProjectAssets; keys: CamKey[]; srcStart: number; L: Layout }> =
-  ({ ev, cfg, assets, keys, srcStart, L }) => {
+const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: ProjectAssets; keys: CamKey[]; srcStart: number; L: Layout; transcript: Transcript | null }> =
+  ({ ev, cfg, assets, keys, srcStart, L, transcript }) => {
   const frame = useCurrentFrame()
   const { fps } = useVideoConfig()
   const t = srcStart + frame / fps
@@ -84,6 +85,11 @@ const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: Projec
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: cfg.cameraMirror ? 'scaleX(-1)' : undefined }} />
         </div>
       )}
+      {transcript && cfg.captions !== 'off' && (
+        <div style={{ position: 'absolute', left: F.x, top: F.y, width: F.w, height: F.h, pointerEvents: 'none' }}>
+          <Captions transcript={transcript} t={t} style={cfg.captions} FW={F.w} FH={F.h} portrait={L.vp.crop} />
+        </div>
+      )}
       {assets.mic && cfg.micVolume > 0 && <TimedAudio src={assets.mic} start={micStart} fps={fps} volume={cfg.micVolume} />}
       {assets.system && cfg.systemVolume > 0 && <TimedAudio src={assets.system} start={sysStart} fps={fps} volume={cfg.systemVolume} />}
     </>
@@ -119,7 +125,7 @@ export function cameraRect(cfg: RenderConfig, camera: { width: number; height: n
  * so the exporter can pick any integer output size without the layout maths changing.
  */
 export const Screencast: React.FC<ScreencastProps> = (props) => {
-  const { assets, events: ev, config: cfg, cuts = [] } = props
+  const { assets, events: ev, config: cfg, cuts = [], transcript = null } = props
   const { fps, width: VW } = useVideoConfig()
   const L = useMemo(() => layout(ev, cfg), [ev, cfg])
   const keys = useMemo(() => buildCamera(ev, cfg, L.vp), [ev, cfg, L])
@@ -132,7 +138,7 @@ export const Screencast: React.FC<ScreencastProps> = (props) => {
           const len = Math.max(1, Math.round((r.end - r.start) * fps))
           const seq = (
             <Sequence key={i} from={from} durationInFrames={len}>
-              <Segment ev={ev} cfg={cfg} assets={assets} keys={keys} srcStart={r.start} L={L} />
+              <Segment ev={ev} cfg={cfg} assets={assets} keys={keys} srcStart={r.start} L={L} transcript={transcript} />
             </Sequence>
           )
           from += len

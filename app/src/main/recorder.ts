@@ -92,18 +92,22 @@ export class Recorder extends EventEmitter {
   }
 
   /** Smart Director analysis: runs `analyze --out dir`, emits 'analyze' progress events, resolves when analysis.json is written. */
-  analyze(dir: string): Promise<void> {
+  analyze(dir: string): Promise<void> { return this.job('analyze', dir) }
+  /** Local speech recognition: runs `transcribe --out dir`, emits 'transcribe' progress events, resolves when transcript.json is written. */
+  transcribe(dir: string): Promise<void> { return this.job('transcribe', dir) }
+
+  private job(cmd: 'analyze' | 'transcribe', dir: string): Promise<void> {
     return new Promise((res, rej) => {
-      const p = spawn(PYTHON, [this.script, 'analyze', '--out', dir], SPAWN)
+      const p = spawn(PYTHON, [this.script, cmd, '--out', dir], SPAWN)
       let buf = '', settled = false, err = ''
-      p.stderr.on('data', (d) => { err += d; console.log('[analyze]', String(d).trim()) })
+      p.stderr.on('data', (d) => { err += d; console.log(`[${cmd}]`, String(d).trim()) })
       p.stdout.on('data', (d) => {
         buf += d
         const lines = buf.split('\n'); buf = lines.pop() ?? ''
         for (const line of lines) {
           if (!line.startsWith('{')) continue
           const ev = JSON.parse(line) as RawEvent
-          this.emit('analyze', ev)
+          this.emit(cmd, ev)
           if (ev.event === 'ready' && !settled) { settled = true; res() }
           if (ev.event === 'error' && !settled) { settled = true; rej(new Error(String(ev.message))) }
         }

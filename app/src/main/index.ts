@@ -3,7 +3,7 @@ import { join, resolve, basename } from 'node:path'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import type { Analysis, Cut, Devices, ExportProgress, Project, ProjectFile, RecorderEvent, RenderConfig, StartOptions, UnfinishedRecording } from '../shared/types'
+import type { Analysis, Cut, Devices, ExportFormat, ExportProgress, Project, ProjectFile, RecorderEvent, RenderConfig, StartOptions, Transcript, UnfinishedRecording } from '../shared/types'
 import { Recorder } from './recorder'
 import { AssetServer } from './assetServer'
 import { exportProject } from './exporter'
@@ -85,11 +85,11 @@ function loadProject(dir: string): Project | null {
   const url = (f: string) => server.url(join(dir, f))
   const cursors: Record<string, string> = {}
   for (const [id, c] of Object.entries(events.cursors ?? {})) cursors[id] = url((c as { file: string }).file)
-  let file: ProjectFile | null = null
-  const pf = join(dir, 'project.json')
-  if (existsSync(pf)) { try { file = JSON.parse(readFileSync(pf, 'utf8')) } catch { file = null } }   // torn file: start from defaults
+  const readJson = <T,>(f: string): T | null => { const p = join(dir, f); if (!existsSync(p)) return null; try { return JSON.parse(readFileSync(p, 'utf8')) } catch { return null } }
+  const file = readJson<ProjectFile>('project.json')         // torn file: start from defaults
+  const transcript = readJson<Transcript>('transcript.json')
   return {
-    dir, name: basename(dir), createdAt: statSync(ev).mtime.toISOString(), events, file,
+    dir, name: basename(dir), createdAt: statSync(ev).mtime.toISOString(), events, file, transcript,
     assets: { screen: url(events.files.screen), mic: events.files.mic ? url(events.files.mic) : null,
               camera: events.files.camera ? url(events.files.camera) : null,
               system: events.files.system ? url(events.files.system) : null, cursors },
@@ -121,6 +121,10 @@ recorder.on('level', (level: number) => win?.webContents.send('mic:level', level
 recorder.on('analyze', (ev: RecorderEvent) => {
   if (ev.event === 'analyzing') broadcast(ev)
   else if (ev.event === 'ready') broadcast({ event: 'analyzing', step: 'done' })
+})
+recorder.on('transcribe', (ev: RecorderEvent) => {
+  if (ev.event === 'transcribing') broadcast(ev)
+  else if (ev.event === 'ready') broadcast({ event: 'transcribing', stage: 'done' })
 })
 
 recorder.on('event', (raw: RecorderEvent) => {
@@ -184,10 +188,18 @@ app.whenReady().then(async () => {
     }
     return JSON.parse(readFileSync(file, 'utf8'))
   })
-  ipcMain.handle('project:export', async (_e, dir: string, config: RenderConfig, cuts: Cut[] = [], suffix?: string) => {
+  let transcribing: Promise<void> | null = null
+  ipcMain.handle('project:transcribe', async (_e, dir: string): Promise<Transcript> => {
+    if (!dir.startsWith(RECORDINGS) || !existsSync(join(dir, 'events.json'))) throw new Error('not a recording folder')
+    if (!IS_WIN) throw new Error('Transcription is not available on macOS yet.')
+    transcribing ??= recorder.transcribe(dir).finally(() => { transcribing = null })
+    await transcribing
+    return JSON.parse(readFileSync(join(dir, 'transcript.json'), 'utf8'))
+  })
+  ipcMain.handle('project:export', async (_e, dir: string, config: RenderConfig, cuts: Cut[] = [], suffix?: string, format?: ExportFormat) => {
     const p = loadProject(dir); if (!p) throw new Error('project not found')
     const send = (prog: ExportProgress) => win?.webContents.send('export:progress', prog)
-    return exportProject(APP_ROOT, p, config, cuts, send, suffix)
+    return exportProject(APP_ROOT, p, config, cuts, send, suffix, format)
   })
   ipcMain.handle('shell:reveal', (_e, p: string) => shell.showItemInFolder(p))
   ipcMain.handle('project:trash', (_e, dir: string) => shell.trashItem(dir))

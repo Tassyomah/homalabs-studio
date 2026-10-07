@@ -9,6 +9,8 @@ Same command line and line protocol as recorder/narrate.py (macOS), so the app d
     narrate_win.py finalize --out DIR     finish a recording whose process died (crash recovery, spec §62)
     narrate_win.py meter [--mic N]        microphone level, one {"level": 0..1} line every 100 ms until stdin closes
     narrate_win.py analyze --out DIR      Smart Director signals + proposals → analysis.json (add-on spec §7–9)
+    narrate_win.py transcribe --out DIR [--model base.en]   local Whisper → transcript.json (spec §43; first run installs
+                                          faster-whisper into LOCALAPPDATA/Narrate/speech and downloads the model)
 
 While recording, `recording.json` (setup) and `events.partial.jsonl` (cursor log, pauses) are appended to on disk,
 so `finalize` can rebuild `events.json` from what reached the disk if the recorder is killed.
@@ -827,6 +829,69 @@ def analyze(args):
     os.replace(tmp, os.path.join(outdir, "analysis.json"))
     emit(event="ready", out=outdir, summary=analysis["summary"])
 
+# ---------------------------------------------------------------- transcription (spec §43; local Whisper)
+def speech_env():
+    """Private virtual environment for the speech engine, created on first use. Returns its python.exe."""
+    root = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Narrate", "speech")
+    py = os.path.join(root, "Scripts", "python.exe")
+    marker = os.path.join(root, "installed.txt")
+    if os.path.exists(py) and os.path.exists(marker): return py
+    emit(event="transcribing", stage="installing", message="Setting up the speech engine (one time, ~300 MB)…")
+    r = subprocess.run([sys.executable, "-m", "venv", root], capture_output=True, text=True, creationflags=CREATE_NO_WINDOW)
+    if r.returncode != 0: raise RuntimeError("could not create the speech environment: " + r.stderr[-400:])
+    # msvc-runtime provides the VC++ runtime DLLs ctranslate2 needs on machines without the system-wide redistributable
+    r = subprocess.run([py, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "faster-whisper", "msvc-runtime"],
+                       capture_output=True, text=True, creationflags=CREATE_NO_WINDOW, timeout=1800)
+    if r.returncode != 0: raise RuntimeError("could not install the speech engine: " + r.stderr[-400:])
+    with open(marker, "w") as fh: fh.write("faster-whisper\n")
+    return py
+
+def transcribe(args):
+    outdir = args.out
+    ev_path = os.path.join(outdir, "events.json")
+    if not outdir or not os.path.exists(ev_path):
+        emit(event="error", code="no_recording", message="No finished recording in that folder."); sys.exit(3)
+    with open(ev_path) as fh: ev = json.load(fh)
+    if not ev["files"].get("mic"):
+        emit(event="error", code="no_mic", message="This recording has no microphone track to transcribe."); sys.exit(3)
+    try: py = speech_env()
+    except Exception as e:
+        emit(event="error", code="speech_install", message=str(e)); sys.exit(4)
+    emit(event="transcribing", stage="loading", message="Loading the speech model…")
+    worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "transcribe_worker.py")
+    raw = os.path.join(outdir, "transcript.raw.json")
+    # decode with ffmpeg to 16 kHz mono float32 so the worker never needs a media library of its own
+    pcm = os.path.join(outdir, "transcript.pcm.tmp")
+    need_ffmpeg()
+    r = run([FFMPEG, "-v", "error", "-y", "-i", os.path.join(outdir, ev["files"]["mic"]), "-ac", "1", "-ar", "16000", "-f", "f32le", pcm], timeout=600)
+    if r.returncode != 0 or not os.path.exists(pcm):
+        emit(event="error", code="decode_failed", message="Could not read the microphone track.\n" + r.stderr[-300:]); sys.exit(4)
+    p = subprocess.Popen([py, worker, pcm, raw, args.model], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         text=True, encoding="utf-8", errors="replace", creationflags=CREATE_NO_WINDOW)
+    JOB.assign(p)
+    err = []; drain(p.stderr, lambda l: (err.append(l), log("[whisper] " + l)))
+    for line in p.stdout:
+        if not line.startswith("{"): continue
+        try: m = json.loads(line)
+        except ValueError: continue
+        if m.get("event") == "progress": emit(event="transcribing", stage=m.get("stage", "transcribing"), done=m.get("done"), total=m.get("total"))
+    p.wait()
+    try: os.remove(pcm)
+    except OSError: pass
+    if p.returncode != 0 or not os.path.exists(raw):
+        emit(event="error", code="transcribe_failed", message="Transcription failed.\n" + "\n".join(err[-4:])); sys.exit(4)
+    # shift from mic time to source (screen) time so the editor and renderer can use it directly
+    with open(raw, encoding="utf-8") as fh: t = json.load(fh)
+    off = ev.get("micOffset") or 0
+    for s in t["segments"]:
+        s["start"] = round(s["start"] + off, 3); s["end"] = round(s["end"] + off, 3)
+        for w in s["words"]: w["start"] = round(w["start"] + off, 3); w["end"] = round(w["end"] + off, 3)
+    t["version"] = 1; t["createdAt"] = datetime.now().isoformat(timespec="seconds"); t["timebase"] = "source"
+    tmp = os.path.join(outdir, "transcript.json.tmp")
+    with open(tmp, "w", encoding="utf-8") as fh: json.dump(t, fh, ensure_ascii=False)
+    os.replace(tmp, os.path.join(outdir, "transcript.json")); os.remove(raw)
+    emit(event="ready", out=outdir, segments=len(t["segments"]), language=t.get("language"))
+
 def main():
     set_dpi_aware()
     ap = argparse.ArgumentParser(prog="narrate")
@@ -834,6 +899,7 @@ def main():
     ap.add_argument("--out"); ap.add_argument("--fps", type=int, default=60)
     ap.add_argument("--screen", type=int, default=0); ap.add_argument("--mic", type=int); ap.add_argument("--no-mic", action="store_true")
     ap.add_argument("--camera", type=int); ap.add_argument("--system-audio", action="store_true")
+    ap.add_argument("--model", default="base.en")
     ap.add_argument("--list", action="store_true"); ap.add_argument("--check", action="store_true"); ap.add_argument("--request", action="store_true")
     args = ap.parse_args()
     if args.list: print(json.dumps(devices_json())); return
@@ -841,6 +907,7 @@ def main():
     if args.cmd == "finalize": recover(args); return
     if args.cmd == "meter": meter(args); return
     if args.cmd == "analyze": analyze(args); return
+    if args.cmd == "transcribe": transcribe(args); return
     record(args)
 
 if __name__ == "__main__": main()

@@ -104,6 +104,26 @@ select { padding: 9px 12px; border-radius: 10px; border: 1px solid var(--ink-10)
 .track .chapter::after { content: ''; position: absolute; top: 0; left: 0; border: 5px solid transparent; border-top-color: var(--ink); border-left-color: var(--ink); }
 .track .highlight { position: absolute; top: 0; height: 6px; background: var(--mustard); }
 
+/* content map */
+.contentmap .sections { display: flex; flex-direction: column; border-top: 1px solid var(--ink-10); padding-top: 8px; }
+.section { display: grid; grid-template-columns: 70px 1fr auto; gap: 12px; align-items: center; padding: 6px; border-radius: 8px; }
+.section.live { background: var(--ink-5); }
+.section .when { padding: 3px 8px; font-size: 12px; font-variant-numeric: tabular-nums; justify-self: start; }
+.section .body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.section .desc { font-size: 13px; color: var(--ink-60); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.section button:last-child { padding: 4px 10px; font-size: 12px; opacity: 0; }
+.section:hover button:last-child { opacity: 1; }
+
+/* transcript */
+.transcript .sentences { display: flex; flex-direction: column; max-height: 260px; overflow: auto; border-top: 1px solid var(--ink-10); padding-top: 8px; }
+.sentence { display: grid; grid-template-columns: 70px 1fr auto; gap: 12px; align-items: center; padding: 5px 6px; border-radius: 8px; font-size: 14px; line-height: 1.4; }
+.sentence .when { padding: 3px 8px; font-size: 12px; font-variant-numeric: tabular-nums; justify-self: start; }
+.sentence .text { cursor: pointer; }
+.sentence.live { background: var(--ink-5); }
+.sentence.gone .text { color: var(--ink-30); text-decoration: line-through; }
+.sentence button:last-child { padding: 4px 10px; font-size: 12px; opacity: 0; }
+.sentence:hover button:last-child, .sentence.gone button:last-child { opacity: 1; }
+
 .cuts { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .cuts div { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .cuts button { padding: 5px 12px; font-size: 12px; }

@@ -45,6 +45,8 @@ export interface Project {
   assets: ProjectAssets
   /** Saved edits (project.json); null for a recording that has never been opened in the editor. */
   file: ProjectFile | null
+  /** transcript.json, when the recording has been transcribed. */
+  transcript: Transcript | null
 }
 
 /** A removed stretch of the recording, in seconds relative to the start of screen.mp4. */
@@ -82,6 +84,13 @@ export interface ProjectFile {
   director?: { accepted: string[]; rejected: string[]; dismissedAt?: string }
   savedAt: string
 }
+
+/** transcript.json — written by `narrate_win.py transcribe` (spec §43). Times are source seconds (already shifted by micOffset). */
+export interface TranscriptWord { start: number; end: number; word: string; p: number }
+export interface TranscriptSegment { start: number; end: number; text: string; words: TranscriptWord[] }
+export interface Transcript { version: number; language: string; model: string; createdAt: string; duration: number; segments: TranscriptSegment[] }
+
+export type CaptionStyle = 'off' | 'minimal' | 'bold'
 
 /** analysis.json — written by `narrate_win.py analyze` (add-on spec §7–9). Signals are raw; proposals are editable suggestions. */
 export type ProposalType = 'REMOVE' | 'ZOOM' | 'CHAPTER' | 'HIGHLIGHT'
@@ -121,14 +130,15 @@ export interface RenderConfig {
   cameraMirror: boolean // selfie view: flip horizontally
   micVolume: number     // 0..1.5, 1 = as recorded
   systemVolume: number  // 0..1.5, 0 = muted
+  captions: CaptionStyle
 }
 export const defaultConfig: RenderConfig = {
   aspect: 'source', zoom: 2, padding: 0.06, radius: 24, background: 'indigo', cursorScale: 1.6, outputHeight: 1080,
   cameraShape: 'circle', cameraSize: 0.2, cameraCorner: 'br', cameraMirror: true,
-  micVolume: 1, systemVolume: 0.8,
+  micVolume: 1, systemVolume: 0.8, captions: 'off',
 }
 
-export type ScreencastProps = { assets: ProjectAssets; events: RecordingEvents; config: RenderConfig; cuts?: Cut[]; [k: string]: unknown }
+export type ScreencastProps = { assets: ProjectAssets; events: RecordingEvents; config: RenderConfig; cuts?: Cut[]; transcript?: Transcript | null; [k: string]: unknown }
 
 export type MicPermission = 'authorized' | 'denied' | 'restricted' | 'notDetermined' | 'unknown'
 export interface Permissions { screen: boolean; mic: MicPermission }
@@ -139,6 +149,7 @@ export type RecorderEvent =
   | { event: 'finalizing'; step: 'video' | 'audio' }
   | { event: 'recovering'; step: 'video' | 'audio' | 'done' }
   | { event: 'analyzing'; step: 'audio' | 'screen' | 'interaction' | 'done' }
+  | { event: 'transcribing'; stage: 'installing' | 'loading' | 'transcribing' | 'done'; message?: string; done?: number; total?: number }
   | { event: 'ready'; out: string; project: Project }
   | { event: 'error'; code: string; message: string }
 export type RecState = 'idle' | 'countdown' | 'recording' | 'paused' | 'finalizing'
@@ -153,6 +164,7 @@ export interface Devices {
 export interface StartOptions { screen: number; mic: number | null; camera?: number | null; systemAudio?: boolean; fps: number }
 /** A recording folder whose recorder died before writing events.json (recording.json still present). */
 export interface UnfinishedRecording { dir: string; name: string; startedAt: string; display: DisplayInfo; mic: string | null }
+export type ExportFormat = 'mp4' | 'gif'
 export interface ExportProgress { progress: number; stage: 'bundling' | 'rendering' | 'done' | 'error'; message?: string; output?: string; suffix?: string }
 
 export type Platform = 'darwin' | 'win32' | 'linux'
@@ -180,8 +192,10 @@ export interface NarrateApi {
   saveProject(dir: string, file: ProjectFile): Promise<void>
   /** Smart Director: cached analysis.json, or run the analysis (force = redo). Progress arrives via onRecorderEvent 'analyzing'. */
   analyzeProject(dir: string, force?: boolean): Promise<Analysis>
+  /** Local speech recognition → transcript.json. Progress arrives via onRecorderEvent 'transcribing'. */
+  transcribeProject(dir: string): Promise<Transcript>
   /** Render one asset of the recording; `suffix` names the output file (`<stamp>-<suffix>.mp4`). */
-  exportProject(dir: string, config: RenderConfig, cuts: Cut[], suffix?: string): Promise<string>
+  exportProject(dir: string, config: RenderConfig, cuts: Cut[], suffix?: string, format?: ExportFormat): Promise<string>
   onExportProgress(cb: (p: ExportProgress) => void): () => void
   reveal(path: string): Promise<void>
   trashProject(dir: string): Promise<void>

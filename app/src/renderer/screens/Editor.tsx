@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Player, type PlayerRef } from '@remotion/player'
 import { Screencast, compositionSize } from '../../video/Screencast'
 import { keptDuration, keptRanges, outToSrc, srcToOut } from '../../video/ranges'
-import { ASPECTS, ASSET_LABEL, defaultConfig, type Analysis, type Background, type CameraCorner, type CameraShape, type Chapter, type Cut, type DerivedAsset, type ExportProgress, type Project, type Proposal, type RenderConfig, type ScreencastProps } from '../../shared/types'
+import { ASPECTS, ASSET_LABEL, defaultConfig, type Analysis, type Background, type CameraCorner, type CameraShape, type CaptionStyle, type Chapter, type Cut, type DerivedAsset, type ExportProgress, type Project, type Proposal, type RenderConfig, type ScreencastProps, type Transcript, type TranscriptSegment } from '../../shared/types'
 import { revealLabel } from '../platform'
 import { Timeline, fmt } from './Timeline'
 import { Director, type DirectorState, type DirectorStatus } from './Director'
+import { TranscriptPanel, fillerRanges, type TranscribeStatus } from './TranscriptPanel'
+import { ContentMap } from './ContentMap'
 import { generateAssets } from '../generate'
 
 const FPS = 60
@@ -37,11 +39,14 @@ export function Editor({ project }: { project: Project }) {
   const cuts: Cut[] = asset ? asset.cuts : edits.cuts
   const [analysis, setAnalysis] = useState<Analysis | null>(null)
   const [dstatus, setDstatus] = useState<DirectorStatus>({ kind: 'idle' })
+  const [transcript, setTranscript] = useState<Transcript | null>(project.transcript)
+  const [tstatus, setTstatus] = useState<TranscribeStatus>({ kind: 'idle' })
   const history = useRef<{ past: Edits[]; future: Edits[] }>({ past: [], future: [] })
   const dirty = useRef(false)
   const [, bump] = useState(0)
   const [prog, setProg] = useState<ExportProgress | null>(null)
   const [queue, setQueue] = useState<{ total: number; done: number; current: string } | null>(null)
+  const [format, setFormat] = useState<'mp4' | 'gif'>('mp4')
   const [playheadSrc, setPlayheadSrc] = useState(0)
   const [pendingCut, setPendingCut] = useState<number | null>(null)
   const playerRef = useRef<PlayerRef>(null)
@@ -86,7 +91,28 @@ export function Editor({ project }: { project: Project }) {
       .catch((e: Error) => setDstatus(/not available/i.test(e.message) ? { kind: 'unavailable', message: e.message } : { kind: 'error', message: e.message }))
   }, [project.dir])
   useEffect(() => { runAnalysis(false) }, [runAnalysis])
-  useEffect(() => window.narrate.onRecorderEvent((e) => { if (e.event === 'analyzing' && e.step !== 'done') setDstatus({ kind: 'running', step: e.step }) }), [])
+  useEffect(() => window.narrate.onRecorderEvent((e) => {
+    if (e.event === 'analyzing' && e.step !== 'done') setDstatus({ kind: 'running', step: e.step })
+    if (e.event === 'transcribing' && e.stage !== 'done') setTstatus({ kind: 'running', message: e.message ?? (e.stage === 'transcribing' && e.done != null && e.total ? `Transcribing… ${Math.round(e.done / e.total * 100)}%` : 'Transcribing…') })
+  }), [])
+
+  // Transcript (spec §43): on demand; cached in transcript.json. Filler words become extra Smart Director proposals (§42).
+  const transcribe = () => {
+    setTstatus({ kind: 'running', message: 'Starting the speech engine…' })
+    window.narrate.transcribeProject(project.dir).then((t) => { setTranscript(t); setTstatus({ kind: 'idle' }) })
+      .catch((e: Error) => setTstatus({ kind: 'error', message: e.message }))
+  }
+  const analysisWithFillers = useMemo<Analysis | null>(() => {
+    if (!analysis) return null
+    if (!transcript) return analysis
+    const fill = fillerRanges(transcript).map((f, i): Proposal => ({ id: `filler-${i}`, type: 'REMOVE', start: Math.max(0, f.start - 0.05), end: f.end + 0.05, reason: `filler word “${f.word}”`, confidence: 'medium' }))
+    if (!fill.length) return analysis
+    const proposals = [...analysis.proposals.filter((p) => !p.id.startsWith('filler-')), ...fill]
+    return { ...analysis, proposals, summary: { ...analysis.summary, REMOVE: proposals.filter((p) => p.type === 'REMOVE').length,
+      removableSeconds: Math.round(proposals.filter((p) => p.type === 'REMOVE').reduce((s, p) => s + p.end - p.start, 0) * 100) / 100 } }
+  }, [analysis, transcript])
+  const removeSentence = (s: TranscriptSegment) => setCuts((c) => [...c, [s.start, s.end]])
+  const restoreSentence = (s: TranscriptSegment) => setCuts((c) => c.filter(([a, b]) => !(a <= s.start + 0.05 && b >= s.end - 0.05)))
 
   const acceptProposal = (e: Edits, p: Proposal): Edits => {
     const d = { ...e.director, accepted: [...e.director.accepted.filter((id) => id !== p.id), p.id], rejected: e.director.rejected.filter((id) => id !== p.id) }
@@ -110,7 +136,7 @@ export function Editor({ project }: { project: Project }) {
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h)
   })
 
-  const props: ScreencastProps = useMemo(() => ({ assets: project.assets, events: project.events, config, cuts }), [project, config, cuts])
+  const props: ScreencastProps = useMemo(() => ({ assets: project.assets, events: project.events, config, cuts, transcript }), [project, config, cuts, transcript])
   const size = compositionSize(props)
   const kept = useMemo(() => keptRanges(project.events, cuts), [project.events, cuts])
   const frames = Math.max(1, Math.ceil(keptDuration(project.events, cuts) * FPS))
@@ -142,7 +168,7 @@ export function Editor({ project }: { project: Project }) {
     ev: project.events, analysis, masterCuts: e.cuts, chapters: e.chapters, highlights: e.highlights, masterSavedAt: project.file?.savedAt ?? null }) }))
   const removeAsset = (id: string) => { if (selected === id) setSelected('master'); apply((e) => ({ ...e, assets: e.assets.filter((a) => a.id !== id) })) }
   const assetDuration = (a: DerivedAsset | null) => keptDuration(project.events, a ? a.cuts : edits.cuts)
-  const exportOne = (a: DerivedAsset | null) => window.narrate.exportProject(project.dir, a ? { ...edits.config, ...a.config } : edits.config, a ? a.cuts : edits.cuts, a ? a.name : 'master')
+  const exportOne = (a: DerivedAsset | null) => window.narrate.exportProject(project.dir, a ? { ...edits.config, ...a.config } : edits.config, a ? a.cuts : edits.cuts, a ? a.name : 'master', format)
   const exportAll = async () => {
     const list: (DerivedAsset | null)[] = [null, ...assets]
     setQueue({ total: list.length, done: 0, current: 'Master' })
@@ -187,8 +213,10 @@ export function Editor({ project }: { project: Project }) {
           <button onClick={redo} disabled={history.current.future.length === 0} title="Redo (Ctrl+Y)">Redo</button>
         </div>
         <Timeline ev={project.events} cuts={cuts} chapters={asset ? [] : chapters} highlights={asset ? [] : highlights} playhead={playheadSrc} pendingCut={pendingCut} onSeek={seekSrc} />
-        {!asset && <Director analysis={analysis} status={dstatus} state={director} onAccept={onAccept} onReject={onReject} onAcceptAll={onAcceptAll}
+        {!asset && <Director analysis={analysisWithFillers} status={dstatus} state={director} onAccept={onAccept} onReject={onReject} onAcceptAll={onAcceptAll}
           onDismiss={onDismiss} onSeek={seekSrc} onRerun={() => runAnalysis(true)} />}
+        {!asset && <TranscriptPanel transcript={transcript} status={tstatus} cuts={cuts} hasMic={!!project.assets.mic} playhead={playheadSrc}
+          onCreate={transcribe} onSeek={seekSrc} onRemove={removeSentence} onRestore={restoreSentence} />}
         {sortedCuts.length > 0 && (
           <div className="cuts">
             {sortedCuts.map(({ c, i }) => (
@@ -196,14 +224,11 @@ export function Editor({ project }: { project: Project }) {
             ))}
           </div>
         )}
-        {!asset && chapters.length > 0 && (
-          <div className="cuts">
-            {chapters.map((c, i) => (
-              <div key={i}><span>Chapter · <button className="when" onClick={() => seekSrc(c.t)}>{fmt(c.t)}</button> <input className="inline" value={c.title}
-                onChange={(e) => apply((ed) => ({ ...ed, chapters: ed.chapters.map((x, k) => k === i ? { ...x, title: e.target.value } : x) }))} /></span>
-                <button onClick={() => apply((ed) => ({ ...ed, chapters: ed.chapters.filter((_, k) => k !== i) }))}>Remove</button></div>
-            ))}
-          </div>
+        {!asset && (chapters.length > 0 || transcript) && (
+          <ContentMap chapters={chapters} transcript={transcript} duration={dur} playhead={playheadSrc} onSeek={seekSrc}
+            onRename={(i, title) => apply((ed) => ({ ...ed, chapters: ed.chapters.map((x, k) => k === i ? { ...x, title } : x) }))}
+            onRemove={(i) => apply((ed) => ({ ...ed, chapters: ed.chapters.filter((_, k) => k !== i) }))}
+            onAddHere={() => apply((ed) => ({ ...ed, chapters: [...ed.chapters.filter((c) => Math.abs(c.t - playheadSrc) > 0.5), { t: playheadSrc, title: `Section ${ed.chapters.length + 2}` }].sort((a, b) => a.t - b.t) }))} />
         )}
       </div>
       <div className="panel">
@@ -249,6 +274,14 @@ export function Editor({ project }: { project: Project }) {
           </>)}
         </>)}
 
+        {transcript && (<>
+          <h2>Captions</h2>
+          <div className="control"><div className="lbl"><span>Style</span></div>
+            <div className="seg">{(['off', 'minimal', 'bold'] as CaptionStyle[]).map((s) => (
+              <button key={s} className={config.captions === s ? 'on' : ''} onClick={() => set('captions', s)}>{s === 'off' ? 'Off' : s === 'minimal' ? 'Minimal' : 'Bold'}</button>))}</div>
+            <span className="note">From the transcript; the spoken word is highlighted.</span></div>
+        </>)}
+
         {(project.assets.mic || project.assets.system) && (<>
           <h2>Sound</h2>
           {project.assets.mic && <div className="control"><div className="lbl"><span>Voice</span><span>{config.micVolume === 0 ? 'muted' : Math.round(config.micVolume * 100) + '%'}</span></div>
@@ -258,11 +291,17 @@ export function Editor({ project }: { project: Project }) {
         </>)}
 
         <h2>Export</h2>
-        <div className="control"><div className="lbl"><span>Size</span></div>
+        <div className="control"><div className="lbl"><span>Format</span></div>
+          <div className="seg">
+            <button className={format === 'mp4' ? 'on' : ''} onClick={() => setFormat('mp4')}>MP4</button>
+            <button className={format === 'gif' ? 'on' : ''} onClick={() => setFormat('gif')}>GIF</button>
+          </div>
+          {format === 'gif' && <span className="note">Silent, 15 fps, up to 480 px on the short side. Best for clips under 15 seconds.</span>}</div>
+        {format === 'mp4' && <div className="control"><div className="lbl"><span>Size</span></div>
           <div className="seg">{[1080, 1440, 0].map((h) => (
-            <button key={h} className={config.outputHeight === h ? 'on' : ''} onClick={() => set('outputHeight', h)}>{h ? h + 'p' : 'Source'}</button>))}</div></div>
+            <button key={h} className={config.outputHeight === h ? 'on' : ''} onClick={() => set('outputHeight', h)}>{h ? h + 'p' : 'Source'}</button>))}</div></div>}
         <button className="primary" disabled={!!busy || !!queue} onClick={() => { setProg({ stage: 'bundling', progress: 0 }); exportOne(asset).catch(() => {}) }}>
-          {busy ? (prog!.stage === 'bundling' ? 'Preparing…' : `Rendering ${Math.round(prog!.progress * 100)}%`) : `Export ${asset ? asset.name : 'master'} MP4`}
+          {busy ? (prog!.stage === 'bundling' ? 'Preparing…' : `Rendering ${Math.round(prog!.progress * 100)}%`) : `Export ${asset ? asset.name : 'master'} ${format.toUpperCase()}`}
         </button>
         {assets.length > 0 && <button disabled={!!busy || !!queue} onClick={exportAll}>{queue ? `Exporting ${queue.done + 1}/${queue.total}: ${queue.current}` : `Export all (${assets.length + 1})`}</button>}
         {busy && <div className="progress"><i style={{ width: `${prog!.progress * 100}%` }} /></div>}
