@@ -1,14 +1,15 @@
 import { useMemo } from 'react'
-import type { Cut, RecordingEvents } from '../../shared/types'
+import type { Chapter, Cut, RecordingEvents } from '../../shared/types'
 import { keptRanges, removedRanges, type Range } from '../../video/ranges'
 
 /**
- * The recording's timeline in source time: kept stretches, recorder pauses and user cuts, with the playhead.
- * Click anywhere to seek. Editing happens through the buttons above it (trim / cut / restore), never by dragging
- * tiny handles — the spec wants a simple editor first (§2, §36).
+ * The recording's timeline in source time: kept stretches, recorder pauses and user cuts, chapters and highlights,
+ * with the playhead. Click anywhere to seek. Editing happens through the buttons above it (trim / cut / restore),
+ * never by dragging tiny handles — the spec wants a simple editor first (§2, §36).
  */
-export function Timeline({ ev, cuts, playhead, pendingCut, onSeek }: {
-  ev: RecordingEvents; cuts: Cut[]; playhead: number; pendingCut: number | null; onSeek: (tSrc: number) => void
+export function Timeline({ ev, cuts, chapters = [], highlights = [], playhead, pendingCut, onSeek }: {
+  ev: RecordingEvents; cuts: Cut[]; chapters?: Chapter[]; highlights?: [number, number][]
+  playhead: number; pendingCut: number | null; onSeek: (tSrc: number) => void
 }) {
   const dur = ev.videoDuration
   const kept = useMemo(() => keptRanges(ev, cuts), [ev, cuts])
@@ -29,6 +30,8 @@ export function Timeline({ ev, cuts, playhead, pendingCut, onSeek }: {
         {pendingCut !== null && (
           <div className="pending" style={{ left: pct(Math.min(pendingCut, playhead)), width: pct(Math.abs(playhead - pendingCut)) }} />
         )}
+        {highlights.map(([a, b], i) => <div key={'h' + i} className="highlight" style={{ left: pct(a), width: pct(b - a) }} title={`Highlight ${fmt(a)}–${fmt(b)}`} />)}
+        {chapters.map((c, i) => <div key={'ch' + i} className="chapter" style={{ left: pct(c.t) }} title={`${c.title} · ${fmt(c.t)}`} />)}
         {ev.clicks.filter((c) => c.type === 'down').map((c, i) => (
           <i key={'d' + i} className="click" style={{ left: pct(c.t - ev.t0Video) }} />
         ))}

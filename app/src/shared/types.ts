@@ -50,12 +50,33 @@ export interface Project {
 /** A removed stretch of the recording, in seconds relative to the start of screen.mp4. */
 export type Cut = [number, number]
 
+export interface Chapter { t: number; title: string }
+
 /** project.json — every edit is an instruction here; raw media are never touched (spec §38, §60). Autosaved (§61). */
 export interface ProjectFile {
   version: 1
   config: RenderConfig
   cuts: Cut[]
+  chapters?: Chapter[]
+  /** Stand-alone moments (source seconds) the user kept from the Smart Director; future clip sources (add-on §19). */
+  highlights?: [number, number][]
+  /** Smart Director bookkeeping: proposal ids the user accepted or rejected (add-on §8–9). */
+  director?: { accepted: string[]; rejected: string[]; dismissedAt?: string }
   savedAt: string
+}
+
+/** analysis.json — written by `narrate_win.py analyze` (add-on spec §7–9). Signals are raw; proposals are editable suggestions. */
+export type ProposalType = 'REMOVE' | 'ZOOM' | 'CHAPTER' | 'HIGHLIGHT'
+export interface Proposal {
+  id: string; type: ProposalType; start: number; end: number
+  reason: string; confidence: 'high' | 'medium' | 'low'
+  score?: number; clicks?: number; x?: number; y?: number
+}
+export interface Analysis {
+  version: number; analyzedAt: string; duration: number
+  signals: { silences: [number, number][]; scenes: [number, number][]; idle: [number, number][]; clickGroups: [number, number, number][] }
+  proposals: Proposal[]
+  summary: Record<ProposalType, number> & { removableSeconds: number }
 }
 export interface ProjectAssets { screen: string; mic: string | null; camera: string | null; system: string | null; cursors: Record<string, string> }
 
@@ -99,6 +120,7 @@ export type RecorderEvent =
   | { event: 'stopped'; out: string; duration: number }
   | { event: 'finalizing'; step: 'video' | 'audio' }
   | { event: 'recovering'; step: 'video' | 'audio' | 'done' }
+  | { event: 'analyzing'; step: 'audio' | 'screen' | 'interaction' | 'done' }
   | { event: 'ready'; out: string; project: Project }
   | { event: 'error'; code: string; message: string }
 export type RecState = 'idle' | 'countdown' | 'recording' | 'paused' | 'finalizing'
@@ -138,6 +160,8 @@ export interface NarrateApi {
   stopMicMeter(): Promise<void>
   onMicLevel(cb: (level: number) => void): () => void
   saveProject(dir: string, file: ProjectFile): Promise<void>
+  /** Smart Director: cached analysis.json, or run the analysis (force = redo). Progress arrives via onRecorderEvent 'analyzing'. */
+  analyzeProject(dir: string, force?: boolean): Promise<Analysis>
   exportProject(dir: string, config: RenderConfig, cuts: Cut[]): Promise<string>
   onExportProgress(cb: (p: ExportProgress) => void): () => void
   reveal(path: string): Promise<void>

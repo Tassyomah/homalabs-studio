@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Player, type PlayerRef } from '@remotion/player'
 import { Screencast, compositionSize } from '../../video/Screencast'
 import { keptDuration, keptRanges, outToSrc, srcToOut } from '../../video/ranges'
-import { ASPECTS, defaultConfig, type Background, type CameraCorner, type CameraShape, type Cut, type ExportProgress, type Project, type RenderConfig, type ScreencastProps } from '../../shared/types'
+import { ASPECTS, defaultConfig, type Analysis, type Background, type CameraCorner, type CameraShape, type Chapter, type Cut, type ExportProgress, type Project, type Proposal, type RenderConfig, type ScreencastProps } from '../../shared/types'
 import { revealLabel } from '../platform'
 import { Timeline, fmt } from './Timeline'
+import { Director, type DirectorState, type DirectorStatus } from './Director'
 
 const FPS = 60
 const SHAPE: Record<CameraShape, string> = { off: 'Hidden', circle: 'Circle', rounded: 'Rounded' }
@@ -16,12 +17,18 @@ const BGS: { id: Background; label: string; css: string }[] = [
 ]
 
 /** Everything the user can change; one snapshot per undo step. */
-type Edits = { config: RenderConfig; cuts: Cut[] }
+type Edits = { config: RenderConfig; cuts: Cut[]; chapters: Chapter[]; highlights: [number, number][]; director: DirectorState }
 
 export function Editor({ project }: { project: Project }) {
   // Saved edits win; defaults fill in settings that did not exist when the project was last saved.
-  const [edits, setEdits] = useState<Edits>(() => ({ config: { ...defaultConfig, ...(project.file?.config ?? {}) }, cuts: project.file?.cuts ?? [] }))
-  const { config, cuts } = edits
+  const [edits, setEdits] = useState<Edits>(() => ({
+    config: { ...defaultConfig, ...(project.file?.config ?? {}) }, cuts: project.file?.cuts ?? [],
+    chapters: project.file?.chapters ?? [], highlights: project.file?.highlights ?? [],
+    director: project.file?.director ?? { accepted: [], rejected: [] },
+  }))
+  const { config, cuts, chapters, highlights, director } = edits
+  const [analysis, setAnalysis] = useState<Analysis | null>(null)
+  const [dstatus, setDstatus] = useState<DirectorStatus>({ kind: 'idle' })
   const history = useRef<{ past: Edits[]; future: Edits[] }>({ past: [], future: [] })
   const dirty = useRef(false)
   const [, bump] = useState(0)
@@ -49,10 +56,33 @@ export function Editor({ project }: { project: Project }) {
   useEffect(() => {
     if (!dirty.current) return
     const t = setTimeout(() => {
-      window.narrate.saveProject(project.dir, { version: 1, config, cuts, savedAt: new Date().toISOString() }).catch((e) => console.warn('autosave failed', e))
+      window.narrate.saveProject(project.dir, { version: 1, config, cuts, chapters, highlights, director, savedAt: new Date().toISOString() })
+        .catch((e) => console.warn('autosave failed', e))
     }, 400)
     return () => clearTimeout(t)
-  }, [config, cuts, project.dir])
+  }, [config, cuts, chapters, highlights, director, project.dir])
+
+  // Smart Director (add-on §7–9): analyse on first open (cached in analysis.json afterwards), show progress meanwhile.
+  const runAnalysis = useCallback((force = false) => {
+    setDstatus({ kind: 'running', step: 'audio' })
+    window.narrate.analyzeProject(project.dir, force)
+      .then((a) => { setAnalysis(a); setDstatus({ kind: 'idle' }) })
+      .catch((e: Error) => setDstatus(/not available/i.test(e.message) ? { kind: 'unavailable', message: e.message } : { kind: 'error', message: e.message }))
+  }, [project.dir])
+  useEffect(() => { runAnalysis(false) }, [runAnalysis])
+  useEffect(() => window.narrate.onRecorderEvent((e) => { if (e.event === 'analyzing' && e.step !== 'done') setDstatus({ kind: 'running', step: e.step }) }), [])
+
+  const acceptProposal = (e: Edits, p: Proposal): Edits => {
+    const d = { ...e.director, accepted: [...e.director.accepted.filter((id) => id !== p.id), p.id], rejected: e.director.rejected.filter((id) => id !== p.id) }
+    if (p.type === 'REMOVE') return { ...e, director: d, cuts: [...e.cuts, [p.start, p.end]] }
+    if (p.type === 'CHAPTER') return { ...e, director: d, chapters: [...e.chapters.filter((c) => Math.abs(c.t - p.start) > 0.5), { t: p.start, title: `Section ${e.chapters.length + 2}` }].sort((a, b) => a.t - b.t) }
+    if (p.type === 'HIGHLIGHT') return { ...e, director: d, highlights: [...e.highlights, [p.start, p.end]] }
+    return { ...e, director: d }
+  }
+  const onAccept = (p: Proposal) => apply((e) => acceptProposal(e, p))
+  const onAcceptAll = (ps: Proposal[]) => apply((e) => ps.reduce(acceptProposal, e))
+  const onReject = (p: Proposal) => apply((e) => ({ ...e, director: { ...e.director, rejected: [...e.director.rejected, p.id], accepted: e.director.accepted.filter((id) => id !== p.id) } }))
+  const onDismiss = () => apply((e) => ({ ...e, director: { ...e.director, dismissedAt: new Date().toISOString() } }))
 
   // Keyboard: Z / Y with Ctrl or ⌘ for undo / redo; space is the player's own.
   useEffect(() => {
@@ -109,11 +139,22 @@ export function Editor({ project }: { project: Project }) {
           <button onClick={undo} disabled={history.current.past.length === 0} title="Undo (Ctrl+Z)">Undo</button>
           <button onClick={redo} disabled={history.current.future.length === 0} title="Redo (Ctrl+Y)">Redo</button>
         </div>
-        <Timeline ev={project.events} cuts={cuts} playhead={playheadSrc} pendingCut={pendingCut} onSeek={seekSrc} />
+        <Timeline ev={project.events} cuts={cuts} chapters={chapters} highlights={highlights} playhead={playheadSrc} pendingCut={pendingCut} onSeek={seekSrc} />
+        <Director analysis={analysis} status={dstatus} state={director} onAccept={onAccept} onReject={onReject} onAcceptAll={onAcceptAll}
+          onDismiss={onDismiss} onSeek={seekSrc} onRerun={() => runAnalysis(true)} />
         {sortedCuts.length > 0 && (
           <div className="cuts">
             {sortedCuts.map(({ c, i }) => (
               <div key={i}><span>Removed {fmt(c[0])} – {fmt(c[1])}</span><button onClick={() => restore(i)}>Restore</button></div>
+            ))}
+          </div>
+        )}
+        {chapters.length > 0 && (
+          <div className="cuts">
+            {chapters.map((c, i) => (
+              <div key={i}><span>Chapter · <button className="when" onClick={() => seekSrc(c.t)}>{fmt(c.t)}</button> <input className="inline" value={c.title}
+                onChange={(e) => apply((ed) => ({ ...ed, chapters: ed.chapters.map((x, k) => k === i ? { ...x, title: e.target.value } : x) }))} /></span>
+                <button onClick={() => apply((ed) => ({ ...ed, chapters: ed.chapters.filter((_, k) => k !== i) }))}>Remove</button></div>
             ))}
           </div>
         )}

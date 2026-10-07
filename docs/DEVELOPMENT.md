@@ -33,6 +33,7 @@ python recorder\tests\smoke_win.py           # records the primary display for ~
 python recorder\tests\smoke_win.py --camera  # same, plus the first camera (picks its best format ≤1080p at ≥24 fps)
 python recorder\tests\smoke_win.py --system-audio   # same, plus computer sound (WASAPI loopback; the test beeps so there is something to capture)
 python recorder\win_loopback.py out.wav 3    # loopback self-test: records 3 s with two beeps and prints the sync error
+python recorder\narrate_win.py analyze --out <dir>    # Smart Director: writes analysis.json (silences, scene changes, idle, click groups → proposals)
 python recorder\tests\crash_win.py           # kills the recorder mid-recording, checks ffmpeg died with it, recovers
 python recorder\narrate_win.py meter         # microphone level lines until you press Ctrl-C
 python recorder\narrate_win.py finalize --out <dir>   # finish a recording whose recorder died (what the app's "Restore" does)

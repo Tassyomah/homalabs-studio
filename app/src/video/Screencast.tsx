@@ -153,10 +153,13 @@ export function compositionSize(p: ScreencastProps) {
  * Output size for a quality setting (0 = design size): same aspect as the design, both dimensions even integers.
  * The setting names the shorter side, so "1080p" is 1920×1080 for landscape and 1080×1920 for 9:16.
  */
-export function outputSize(design: { width: number; height: number }, outputHeight: number) {
+export function outputSize(design: { width: number; height: number }, outputHeight: number, aspect: RenderConfig['aspect'] = 'source') {
   const even = (n: number) => Math.max(2, Math.round(n / 2) * 2)
+  const ratio = ASPECTS.find((a) => a.id === aspect)?.ratio ?? null
   const short = Math.min(design.width, design.height)
-  if (!outputHeight || outputHeight >= short) return { width: even(design.width), height: even(design.height) }
-  const s = outputHeight / short
+  const target = !outputHeight || outputHeight >= short ? short : outputHeight
+  // Presets get exact platform sizes (1080×1920, 1080×1080, 1080×1350…) rather than the design's rounded ratio.
+  if (ratio !== null) return ratio >= 1 ? { width: even(target * ratio), height: even(target) } : { width: even(target), height: even(target / ratio) }
+  const s = target / short
   return { width: even(design.width * s), height: even(design.height * s) }
 }

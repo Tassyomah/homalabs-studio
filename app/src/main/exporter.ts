@@ -17,7 +17,7 @@ export async function exportProject(appRoot: string, project: Project, config: R
     const inputProps: ScreencastProps = { assets: project.assets, events: project.events, config, cuts }
     const design = await selectComposition({ serveUrl, id: 'Screencast', inputProps })
     // Render at an even integer size; the composition scales its design layout to whatever size it is given.
-    const composition = { ...design, ...outputSize(design, config.outputHeight) }
+    const composition = { ...design, ...outputSize(design, config.outputHeight, config.aspect) }
     const output = join(project.dir, `${project.name}-narrate.mp4`)
     send({ stage: 'rendering', progress: 0 })
     await renderMedia({

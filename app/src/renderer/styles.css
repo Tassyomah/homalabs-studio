@@ -71,9 +71,35 @@ select { padding: 9px 12px; border-radius: 10px; border: 1px solid var(--ink-10)
 .track .click { position: absolute; bottom: 4px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--paper); opacity: .9; }
 .track .playhead { width: 2px; margin-left: -1px; background: var(--ink); }
 .scale { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-60); font-variant-numeric: tabular-nums; }
+/* Smart Director card */
+.director { background: #fff; border-radius: var(--radius); padding: 14px 18px; display: flex; flex-direction: column; gap: 12px; font-size: 14px; }
+.director.muted { color: var(--ink-60); flex-direction: row; align-items: center; gap: 10px; flex-wrap: wrap; }
+.director.muted button, .director .head button { padding: 7px 14px; font-size: 13px; }
+.director .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.director .facts { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 6px; color: var(--ink-60); font-size: 13px; }
+.director .facts i { font-style: normal; color: var(--ink-30); margin-right: 2px; }
+.director .facts i.on { color: var(--indigo); }
+.director .spinner.small { width: 16px; height: 16px; border-width: 2px; display: inline-block; vertical-align: middle; margin-right: 10px; flex: none; }
+.proposals { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--ink-10); padding-top: 10px; }
+.proposal { display: grid; grid-template-columns: 140px 1fr auto; gap: 12px; align-items: center; font-size: 13px; padding: 6px 0; }
+.proposal .when { padding: 5px 10px; font-variant-numeric: tabular-nums; font-size: 12px; justify-self: start; }
+.proposal .what em { color: var(--ink-60); font-style: normal; }
+.proposal .act { display: flex; gap: 6px; }
+.proposal .act button { padding: 5px 12px; font-size: 12px; }
+.proposal .tag { font-size: 12px; color: var(--ink-60); }
+.proposal.rejected .what { color: var(--ink-30); text-decoration: line-through; }
+.proposal.remove .when { border-left: 4px solid var(--coral); } .proposal.chapter .when { border-left: 4px solid var(--ink); }
+.proposal.highlight .when { border-left: 4px solid var(--mustard); } .proposal.zoom .when { border-left: 4px solid var(--indigo); }
+.track .chapter { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--ink); opacity: .9; }
+.track .chapter::after { content: ''; position: absolute; top: 0; left: 0; border: 5px solid transparent; border-top-color: var(--ink); border-left-color: var(--ink); }
+.track .highlight { position: absolute; top: 0; height: 6px; background: var(--mustard); }
+
 .cuts { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .cuts div { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .cuts button { padding: 5px 12px; font-size: 12px; }
+.cuts .when { font-variant-numeric: tabular-nums; }
+input.inline { font: inherit; font-size: 13px; border: 0; border-bottom: 1px solid var(--ink-10); background: transparent; padding: 2px 4px; color: var(--ink); min-width: 160px; }
+input.inline:focus { outline: none; border-bottom-color: var(--indigo); }
 .panel { display: flex; flex-direction: column; gap: 18px; overflow: auto; }
 .panel h2 { margin-top: 6px; }
 .control { display: flex; flex-direction: column; gap: 6px; }

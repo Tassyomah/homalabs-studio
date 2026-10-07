@@ -8,6 +8,7 @@ Same command line and line protocol as recorder/narrate.py (macOS), so the app d
     narrate_win.py record --out DIR [--fps 60] [--screen N] [--mic N | --no-mic] [--camera N] [--system-audio]
     narrate_win.py finalize --out DIR     finish a recording whose process died (crash recovery, spec §62)
     narrate_win.py meter [--mic N]        microphone level, one {"level": 0..1} line every 100 ms until stdin closes
+    narrate_win.py analyze --out DIR      Smart Director signals + proposals → analysis.json (add-on spec §7–9)
 
 While recording, `recording.json` (setup) and `events.partial.jsonl` (cursor log, pauses) are appended to on disk,
 so `finalize` can rebuild `events.json` from what reached the disk if the recorder is killed.
@@ -39,7 +40,7 @@ Known limits (same as the interim macOS recorder): the floating control bar is p
 no window/region capture yet, no system audio yet. ddagrab's output index follows DXGI order of the
 first GPU, which is assumed to match the DISPLAY1, DISPLAY2 ... device order.
 """
-import argparse, ctypes, glob, hashlib, json, os, re, shutil, signal, struct, subprocess, sys, threading, time, zlib
+import argparse, ctypes, glob, hashlib, json, math, os, re, shutil, signal, struct, subprocess, sys, threading, time, zlib
 from ctypes import wintypes
 from datetime import datetime
 
@@ -706,6 +707,126 @@ def recover(args):
     else: t_end = now()
     finalize(outdir, setup, t_end, capture=setup.get("capture"))
 
+# ---------------------------------------------------------------- analysis (Smart Director, add-on spec §7–9)
+def ff_lines(args, timeout=1800):
+    """Run ffmpeg and return its stderr lines (filters print their reports there)."""
+    return run([FFMPEG, "-hide_banner", "-nostats", *args], timeout=timeout).stderr.splitlines()
+
+def detect_silences(path, offset, noise_db=-35, min_len=0.8):
+    """[(start, end)] in source seconds where the microphone is quiet."""
+    out, start = [], None
+    for line in ff_lines(["-i", path, "-af", f"silencedetect=noise={noise_db}dB:d={min_len}", "-f", "null", "-"]):
+        m = re.search(r"silence_start:\s*([\d.]+)", line)
+        if m: start = float(m.group(1)); continue
+        m = re.search(r"silence_end:\s*([\d.]+)", line)
+        if m and start is not None: out.append((round(start + offset, 3), round(float(m.group(1)) + offset, 3))); start = None
+    return out
+
+def detect_scenes(path, threshold=0.25):
+    """[(t, score)] visual cuts: moments the screen content changed a lot (window switch, page change…)."""
+    out, t = [], None
+    for line in ff_lines(["-i", path, "-vf", f"scale=320:-2,select='gte(scene,{threshold})',metadata=print", "-f", "null", "-"]):
+        m = re.search(r"pts_time:([\d.]+)", line)
+        if m: t = float(m.group(1)); continue
+        m = re.search(r"lavfi\.scene_score=([\d.]+)", line)
+        if m and t is not None: out.append((round(t, 3), round(float(m.group(1)), 3))); t = None
+    return out
+
+def idle_stretches(ev, min_len=2.5):
+    """[(start, end)] in source seconds with no cursor movement and no clicks."""
+    t0, dur = ev["t0Video"], ev["videoDuration"]
+    times = sorted([m[0] - t0 for m in ev["moves"]] + [c["t"] - t0 for c in ev["clicks"]])
+    times = [t for t in times if 0 <= t <= dur]
+    out, prev = [], 0.0
+    for t in times + [dur]:
+        if t - prev >= min_len: out.append((round(prev, 3), round(t, 3)))
+        prev = t
+    return out
+
+def click_groups(ev, gap=2.6, dist_frac=0.33):
+    """Same grouping as the renderer's auto-zoom (motion.ts): clicks close in time and space."""
+    W, t0 = ev["display"]["width"], ev["t0Video"]
+    downs = sorted([(c["t"] - t0, c["x"], c["y"]) for c in ev["clicks"] if c["type"] == "down"])
+    groups = []
+    for t, x, y in downs:
+        if groups and t - groups[-1][-1][0] < gap and math.hypot(x - groups[-1][-1][1], y - groups[-1][-1][2]) < W * dist_frac: groups[-1].append((t, x, y))
+        else: groups.append([(t, x, y)])
+    return groups
+
+def overlap(a, b): return (max(a[0], b[0]), min(a[1], b[1]))
+
+def analyze(args):
+    need_ffmpeg()
+    outdir = args.out
+    ev_path = os.path.join(outdir, "events.json")
+    if not outdir or not os.path.exists(ev_path):
+        emit(event="error", code="no_recording", message="No finished recording in that folder."); sys.exit(3)
+    with open(ev_path) as fh: ev = json.load(fh)
+    dur = ev["videoDuration"]
+    emit(event="analyzing", step="audio")
+    silences = detect_silences(os.path.join(outdir, ev["files"]["mic"]), ev.get("micOffset") or 0) if ev["files"].get("mic") else []
+    emit(event="analyzing", step="screen")
+    scenes = detect_scenes(os.path.join(outdir, ev["files"]["screen"]))
+    emit(event="analyzing", step="interaction")
+    idle = idle_stretches(ev)
+    groups = click_groups(ev)
+    t0 = ev["t0Video"]
+    clicks = sorted(c["t"] - t0 for c in ev["clicks"] if c["type"] == "down")
+
+    proposals, n = [], 0
+    def add(kind, start, end, reason, confidence, **extra):
+        nonlocal n; n += 1
+        proposals.append({"id": f"{kind.lower()}-{n}", "type": kind, "start": round(max(0, start), 3), "end": round(min(dur, end), 3),
+                          "reason": reason, "confidence": confidence, **extra})
+
+    # REMOVE — dead air: nothing said and nothing happening. Keep a little breathing room at both ends.
+    MARGIN = 0.35
+    for s in silences:
+        for i in idle:
+            a, b = overlap(s, i)
+            if b - a - 2 * MARGIN >= 1.0 and not any(a <= c <= b for c in clicks):
+                add("REMOVE", a + MARGIN, b - MARGIN, f"{b - a:.1f}s with no speech and no activity", "high")
+    for s in silences:   # long silence while still moving the mouse: probably thinking; medium confidence
+        if s[1] - s[0] >= 4 and not any(abs(p["start"] - s[0]) < 1 for p in proposals if p["type"] == "REMOVE") and not any(s[0] <= c <= s[1] for c in clicks):
+            add("REMOVE", s[0] + 0.5, s[1] - 0.5, f"{s[1] - s[0]:.1f}s without speech", "medium")
+
+    # CHAPTER — big visual changes, spaced out, not in the first seconds.
+    last = -1e9
+    for t, score in scenes:
+        if t < 3 or t > dur - 3 or t - last < 15: continue
+        add("CHAPTER", t, t, f"the screen changed a lot (score {score:.2f})", "high" if score >= 0.45 else "medium", score=score)
+        last = t
+
+    # ZOOM — informational: these click clusters already drive the automatic zoom.
+    for g in groups:
+        add("ZOOM", g[0][0] - 0.55, g[-1][0] + 1.6, f"{len(g)} click{'s' if len(g) > 1 else ''} in one place", "high", clicks=len(g), x=g[0][1], y=g[0][2])
+
+    # HIGHLIGHT — the busiest 12-second windows: dense interaction, clicks, and a visual change nearby.
+    WIN = 12.0
+    scores = []
+    moves = sorted(m[0] - t0 for m in ev["moves"])
+    for start in [x * 2.0 for x in range(int(max(0, dur - WIN) / 2.0) + 1)]:
+        end = start + WIN
+        sc = sum(1 for t in moves if start <= t < end) / 60.0 + 3 * sum(1 for c in clicks if start <= t < end) + 4 * sum(1 for t, _ in scenes if start <= t < end)
+        scores.append((sc, start, end))
+    scores.sort(reverse=True)
+    chosen = []
+    for sc, start, end in scores:
+        if sc < 3 or any(start < e and end > s for s, e in chosen): continue
+        chosen.append((start, end))
+        add("HIGHLIGHT", start, end, "busy stretch with clicks and visible change", "medium" if sc < 8 else "high", score=round(sc, 2))
+        if len(chosen) == 3: break
+
+    summary = {k: sum(1 for p in proposals if p["type"] == k) for k in ("REMOVE", "ZOOM", "CHAPTER", "HIGHLIGHT")}
+    removable = sum(p["end"] - p["start"] for p in proposals if p["type"] == "REMOVE")
+    analysis = {"version": 1, "analyzedAt": datetime.now().isoformat(timespec="seconds"), "duration": dur,
+                "signals": {"silences": silences, "scenes": scenes, "idle": idle, "clickGroups": [[g[0][0], g[-1][0], len(g)] for g in groups]},
+                "proposals": proposals, "summary": {**summary, "removableSeconds": round(removable, 2)}}
+    tmp = os.path.join(outdir, "analysis.json.tmp")
+    with open(tmp, "w") as fh: json.dump(analysis, fh)
+    os.replace(tmp, os.path.join(outdir, "analysis.json"))
+    emit(event="ready", out=outdir, summary=analysis["summary"])
+
 def main():
     set_dpi_aware()
     ap = argparse.ArgumentParser(prog="narrate")
@@ -719,6 +840,7 @@ def main():
     if args.check: print(json.dumps(check_permissions(args.request))); return
     if args.cmd == "finalize": recover(args); return
     if args.cmd == "meter": meter(args); return
+    if args.cmd == "analyze": analyze(args); return
     record(args)
 
 if __name__ == "__main__": main()

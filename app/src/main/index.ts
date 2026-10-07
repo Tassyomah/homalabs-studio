@@ -3,7 +3,7 @@ import { join, resolve, basename } from 'node:path'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import type { Cut, Devices, ExportProgress, Project, ProjectFile, RecorderEvent, RenderConfig, StartOptions, UnfinishedRecording } from '../shared/types'
+import type { Analysis, Cut, Devices, ExportProgress, Project, ProjectFile, RecorderEvent, RenderConfig, StartOptions, UnfinishedRecording } from '../shared/types'
 import { Recorder } from './recorder'
 import { AssetServer } from './assetServer'
 import { exportProject } from './exporter'
@@ -118,6 +118,10 @@ recorder.on('recover', (ev: RecorderEvent) => {
   else if (ev.event === 'ready') broadcast({ event: 'recovering', step: 'done' })
 })
 recorder.on('level', (level: number) => win?.webContents.send('mic:level', level))
+recorder.on('analyze', (ev: RecorderEvent) => {
+  if (ev.event === 'analyzing') broadcast(ev)
+  else if (ev.event === 'ready') broadcast({ event: 'analyzing', step: 'done' })
+})
 
 recorder.on('event', (raw: RecorderEvent) => {
   let ev = raw
@@ -168,6 +172,17 @@ app.whenReady().then(async () => {
     const tmp = join(dir, 'project.json.tmp')
     await writeFile(tmp, JSON.stringify(file, null, 1), 'utf8')
     await rename(tmp, join(dir, 'project.json'))   // atomic: project.json is always complete (spec §82)
+  })
+  let analyzing: Promise<void> | null = null
+  ipcMain.handle('project:analyze', async (_e, dir: string, force: boolean): Promise<Analysis> => {
+    if (!dir.startsWith(RECORDINGS) || !existsSync(join(dir, 'events.json'))) throw new Error('not a recording folder')
+    const file = join(dir, 'analysis.json')
+    if (force || !existsSync(file)) {
+      if (!IS_WIN) throw new Error('Smart Director analysis is not available on macOS yet.')
+      analyzing ??= recorder.analyze(dir).finally(() => { analyzing = null })
+      await analyzing
+    }
+    return JSON.parse(readFileSync(file, 'utf8'))
   })
   ipcMain.handle('project:export', async (_e, dir: string, config: RenderConfig, cuts: Cut[] = []) => {
     const p = loadProject(dir); if (!p) throw new Error('project not found')

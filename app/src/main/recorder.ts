@@ -91,6 +91,28 @@ export class Recorder extends EventEmitter {
     })
   }
 
+  /** Smart Director analysis: runs `analyze --out dir`, emits 'analyze' progress events, resolves when analysis.json is written. */
+  analyze(dir: string): Promise<void> {
+    return new Promise((res, rej) => {
+      const p = spawn(PYTHON, [this.script, 'analyze', '--out', dir], SPAWN)
+      let buf = '', settled = false, err = ''
+      p.stderr.on('data', (d) => { err += d; console.log('[analyze]', String(d).trim()) })
+      p.stdout.on('data', (d) => {
+        buf += d
+        const lines = buf.split('\n'); buf = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('{')) continue
+          const ev = JSON.parse(line) as RawEvent
+          this.emit('analyze', ev)
+          if (ev.event === 'ready' && !settled) { settled = true; res() }
+          if (ev.event === 'error' && !settled) { settled = true; rej(new Error(String(ev.message))) }
+        }
+      })
+      p.on('error', (e) => { if (!settled) { settled = true; rej(new Error(friendlySpawnError(e))) } })
+      p.on('close', (code) => { if (!settled) { settled = true; rej(new Error(friendlyExit(err, code))) } })
+    })
+  }
+
   /** Microphone level meter: emits 'level' (0..1) ~10×/s until stopMeter(). Only one runs at a time. */
   private meterProc: ChildProcess | null = null
   startMeter(mic: number) {
