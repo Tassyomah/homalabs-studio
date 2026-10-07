@@ -50,6 +50,9 @@ One host clock per platform, shared by media timestamps and the cursor log, so n
 ## Transcript and captions (spec §42–45; Windows today)
 `narrate_win.py transcribe --out DIR` runs local Whisper (faster-whisper on CPU, `base.en` by default) in a private virtual environment at `%LOCALAPPDATA%\Narrate\speech`, created and populated on first use (~300 MB incl. the model; the only network access the product makes). `recorder/transcribe_worker.py` runs inside that environment and writes word-level timestamps; the recorder shifts them by `micOffset` into source time and writes `transcript.json`. The editor shows sentences (click to seek, Remove = cut, Restore), derives filler-word REMOVE proposals for the Smart Director (`fillerRanges`), and `video/Captions.tsx` burns captions into the frame (Minimal / Bold presets, current word highlighted, safe-area aware, larger in portrait). Captions are a `RenderConfig` setting, so derivatives can differ from the master.
 
+## Voice clean-up (spec §16)
+`narrate_win.py enhance --out DIR` writes `mic.clean.wav` (80 Hz high-pass → `afftdn` noise reduction → two-pass `loudnorm` to −16 LUFS / −1.5 dBTP, linear so timing is untouched) beside the raw `mic.wav`, which is never modified. `RenderConfig.voice` picks which one the composition plays; the editor shows As recorded / Cleaned once the clean track exists.
+
 ## Content (add-on §13)
 `renderer/content.ts` assembles a title, description and LinkedIn post from transcript sentences and chapter titles only (no model, nothing invented), and picks thumbnail moments from highlights, chapters and scene changes; `exporter.renderThumbnails` renders them with Remotion `renderStill` at 1280 px into `<dir>/thumbs/`. The Content card shows both with Copy / reveal.
 
