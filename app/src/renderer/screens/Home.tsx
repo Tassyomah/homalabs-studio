@@ -11,6 +11,8 @@ export function Home({ projects, onOpen, onChanged, lastError }: {
   const [perms, setPerms] = useState<Permissions | null>(null)
   const [screen, setScreen] = useState(0)
   const [mic, setMic] = useState<number | null>(null)
+  const [camera, setCamera] = useState<number | null>(null)   // default off (spec §96)
+  const [systemAudio, setSystemAudio] = useState(false)       // default off (spec §96)
   const [countdown, setCountdown] = useState(3)
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
   const [error, setError] = useState<string | null>(null)
@@ -56,7 +58,7 @@ export function Home({ projects, onOpen, onChanged, lastError }: {
     setError(null)
     for (let n = countdown; n > 0; n--) { setPhase({ kind: 'countdown', n }); await new Promise((r) => setTimeout(r, 1000)) }
     setPhase({ kind: 'starting' })
-    try { await window.narrate.startRecording({ screen, mic, fps: 60 }) }
+    try { await window.narrate.startRecording({ screen, mic, camera, systemAudio, fps: 60 }) }
     catch (e) { setError(friendly((e as Error).message)); setPhase({ kind: 'idle' }) }
   }
 
@@ -119,6 +121,20 @@ export function Home({ projects, onOpen, onChanged, lastError }: {
           </select>
           {devices && devices.mics.length === 0 && <span className="note">No microphone detected.</span>}
           {mic !== null && isWin && <div className="meter" title="Microphone level"><i style={{ width: `${Math.round(level * 100)}%` }} /></div>}</div>
+        {devices?.cameras && devices.cameras.length > 0 && (
+          <div className="field"><label>Camera</label>
+            <select value={camera ?? ''} onChange={(e) => setCamera(e.target.value === '' ? null : Number(e.target.value))}>
+              <option value="">No camera</option>
+              {devices.cameras.map((c) => <option key={c.index} value={c.index}>{c.name}</option>)}
+            </select></div>
+        )}
+        {isWin && (
+          <div className="field"><label>Computer sound</label>
+            <div className="seg">
+              <button className={!systemAudio ? 'on' : ''} onClick={() => setSystemAudio(false)}>Off</button>
+              <button className={systemAudio ? 'on' : ''} onClick={() => setSystemAudio(true)}>Record</button>
+            </div></div>
+        )}
         <div className="field"><label>Countdown</label>
           <select value={countdown} onChange={(e) => setCountdown(Number(e.target.value))}>
             <option value={0}>Immediate</option><option value={3}>3 seconds</option><option value={5}>5 seconds</option>

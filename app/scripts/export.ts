@@ -21,11 +21,17 @@ const events = JSON.parse(readFileSync(eventsPath, 'utf8')) as RecordingEvents
 const url = (f: string) => server.url(join(dir, f))
 const cursors: Record<string, string> = {}
 for (const [id, c] of Object.entries(events.cursors)) cursors[id] = url(c.file)
+const projectFile = join(dir, 'project.json')
+const saved = existsSync(projectFile) ? (JSON.parse(readFileSync(projectFile, 'utf8')) as Project['file']) : null
 const project: Project = {
-  dir, name: basename(dir), createdAt: statSync(eventsPath).mtime.toISOString(), events,
-  assets: { screen: url(events.files.screen), mic: events.files.mic ? url(events.files.mic) : null, cursors },
+  dir, name: basename(dir), createdAt: statSync(eventsPath).mtime.toISOString(), events, file: saved,
+  assets: { screen: url(events.files.screen), mic: events.files.mic ? url(events.files.mic) : null,
+            camera: events.files.camera ? url(events.files.camera) : null,
+            system: events.files.system ? url(events.files.system) : null, cursors },
 }
-const config = { ...defaultConfig, outputHeight: Number(heightArg ?? 1080), zoom: Number(zoomArg ?? defaultConfig.zoom) }
+// Saved edits apply, as in the app; the CLI arguments override height and zoom.
+const base = { ...defaultConfig, ...(saved?.config ?? {}) }
+const config = { ...base, outputHeight: Number(heightArg ?? base.outputHeight), zoom: Number(zoomArg ?? base.zoom) }
 let last = -1
 const started = Date.now()
 const out = await exportProject(resolve(import.meta.dirname, '..'), project, config, (p) => {

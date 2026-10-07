@@ -5,8 +5,8 @@ Record once. Let the software make it look good. See `docs/SPEC.md`.
 Pipeline (same shape as Screen Studio's own project files, so those import too):
 
 1. **capture** — recorder sidecar per OS (`recorder/narrate.py` macOS, `recorder/narrate_win.py` Windows) → `<recordings>/<stamp>/`
-   `screen.mp4` (native pixels, cursor hidden) + `mic.wav` + `events.json`
-   (cursor path, clicks, cursor PNGs; all on the host clock so nothing drifts).
+   `screen.mp4` (native pixels, cursor hidden) + `mic.wav` + optional `camera.mp4` and `system.wav` + `events.json`
+   (cursor path, clicks, cursor PNGs; all on the host clock so nothing drifts). Crash-tolerant: unfinished recordings are offered for recovery.
 2. **narrate** — (next) cut the take into segments at clicks/pauses, record a voice line
    per segment with retakes; zoom timing follows the narration.
 3. **render** — (next) Remotion composition: smooth cursor, auto-zoom to click groups,

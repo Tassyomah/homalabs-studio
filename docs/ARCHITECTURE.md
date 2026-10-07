@@ -23,7 +23,9 @@ Spec: `docs/SPEC.md` (governing). This file records how the code is shaped to me
 |---|---|
 | capture (macOS) | `recorder/narrate.py` (ffmpeg avfoundation + PyObjC cursor log). Swift/ScreenCaptureKit replacement in `recorder/swift/`, same protocol. |
 | capture (Windows) | `recorder/narrate_win.py` (ffmpeg ddagrab → gdigrab fallback, dshow mic, Win32 cursor log; standard library only). Smoke test: `recorder/tests/smoke_win.py`. |
-| media / storage | project folder `~/Movies/Narrate/<stamp>/` (Windows: `~/Videos/Narrate/`): `screen.mp4`, `mic.wav`, `events.json`, `cursors/`. Raw media is never modified after finalisation. |
+| media / storage | project folder `~/Movies/Narrate/<stamp>/` (Windows: `~/Videos/Narrate/`): `screen.mp4`, `mic.wav`, `camera.mp4` (optional), `events.json`, `cursors/`. Raw media is never modified after finalisation. |
+| system audio (Windows) | `recorder/win_loopback.py`: WASAPI loopback of the default output via ctypes/raw COM, float32 WAV, silence gaps filled from the device position so sample N is always at `t0System + N/rate`. Converted to `system.wav` at finalisation; mixed in the composition with its own volume. |
+| camera overlay | `app/src/video/Screencast.tsx` `cameraRect` + `TimedVideo`: the camera is its own file on the shared clock (`cameraOffset`), composited over the screen frame at render time with shape / size / corner / mirror from `RenderConfig`, so placement stays editable (spec §10). It does not move with the zoom. |
 | cursor + zoom (rendering) | `app/src/video/motion.ts` (camera keyframes, smoothing), `ranges.ts` (kept ranges), `Screencast.tsx` |
 | export | `app/src/main/exporter.ts` |
 | UI | `app/src/renderer/**` |
@@ -45,4 +47,4 @@ One host clock per platform, shared by media timestamps and the cursor log, so n
 The recorder writes `recording.json` at start and journals the cursor log and pauses to `events.partial.jsonl` every 0.5 s. Media go to Matroska, which stays readable when truncated. `events.json` is written atomically at the end and the journal removed. On launch the app lists folders that have `recording.json` but no `events.json` and offers **Restore** (runs `narrate_win.py finalize --out DIR`, which rebuilds `events.json` from the journal and remuxes the media) or **Discard** (Bin, after confirmation). ffmpeg children live in a kill-on-close job object so a dead recorder cannot leave a capture running.
 
 ## Non-destructive edits
-Pauses are stored as `pauses: [[t0,t1]]` and skipped at render time (`ranges.ts`), never cut from the media. User cuts, zoom edits and masks will follow the same pattern: instructions in the project, raw media untouched (spec §38, §60).
+Pauses are stored as `pauses: [[t0,t1]]` and skipped at render time (`ranges.ts`), never cut from the media. Editor settings (`RenderConfig`: zoom, padding, background, cursor, camera overlay, volumes, export size) are autosaved to `project.json` in the recording folder ~0.4 s after each change, written atomically; the editor and the CLI exporter both start from it. User cuts, zoom edits and masks will follow the same pattern: instructions in the project, raw media untouched (spec §38, §60, §61).

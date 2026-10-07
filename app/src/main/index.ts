@@ -1,9 +1,9 @@
 import { app, BrowserWindow, ipcMain, shell, screen, globalShortcut } from 'electron'
 import { join, resolve, basename } from 'node:path'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import type { Devices, ExportProgress, Project, RecorderEvent, RenderConfig, StartOptions, UnfinishedRecording } from '../shared/types'
+import type { Devices, ExportProgress, Project, ProjectFile, RecorderEvent, RenderConfig, StartOptions, UnfinishedRecording } from '../shared/types'
 import { Recorder } from './recorder'
 import { AssetServer } from './assetServer'
 import { exportProject } from './exporter'
@@ -40,6 +40,26 @@ function createWindow() {
   win.webContents.on('console-message', (e) => { if (e.level === 'error' || e.level === 'warning') console.log('[renderer]', e.message) })
   load(win)
   win.on('closed', () => (win = null))
+  devScreenshot(win)
+}
+
+/**
+ * Developer aid: NARRATE_SCREENSHOT=<file.png> saves a picture of the main window ~2 s after it loads
+ * (NARRATE_OPEN=<recording dir> opens that recording in the editor first), then quits. Never active for users.
+ */
+function devScreenshot(w: BrowserWindow) {
+  const file = process.env.NARRATE_SCREENSHOT
+  if (!file) return
+  w.webContents.once('did-finish-load', () => {
+    const open = process.env.NARRATE_OPEN
+    if (open) w.webContents.send('dev:open', open)
+    setTimeout(async () => {
+      const img = await w.webContents.capturePage()
+      await writeFile(file, img.toPNG())
+      console.log('[dev] screenshot written', file)
+      app.quit()
+    }, Number(process.env.NARRATE_SCREENSHOT_DELAY ?? 2500))
+  })
 }
 
 /** Small always-on-top control bar shown while recording (timer, pause, stop). */
@@ -65,9 +85,14 @@ function loadProject(dir: string): Project | null {
   const url = (f: string) => server.url(join(dir, f))
   const cursors: Record<string, string> = {}
   for (const [id, c] of Object.entries(events.cursors ?? {})) cursors[id] = url((c as { file: string }).file)
+  let file: ProjectFile | null = null
+  const pf = join(dir, 'project.json')
+  if (existsSync(pf)) { try { file = JSON.parse(readFileSync(pf, 'utf8')) } catch { file = null } }   // torn file: start from defaults
   return {
-    dir, name: basename(dir), createdAt: statSync(ev).mtime.toISOString(), events,
-    assets: { screen: url(events.files.screen), mic: events.files.mic ? url(events.files.mic) : null, cursors },
+    dir, name: basename(dir), createdAt: statSync(ev).mtime.toISOString(), events, file,
+    assets: { screen: url(events.files.screen), mic: events.files.mic ? url(events.files.mic) : null,
+              camera: events.files.camera ? url(events.files.camera) : null,
+              system: events.files.system ? url(events.files.system) : null, cursors },
   }
 }
 
@@ -138,6 +163,12 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('mic:meter:start', (_e, mic: number) => { if (recorder.state === 'idle') recorder.startMeter(mic) })
   ipcMain.handle('mic:meter:stop', () => recorder.stopMeter())
+  ipcMain.handle('project:save', async (_e, dir: string, file: ProjectFile) => {
+    if (!dir.startsWith(RECORDINGS) || !existsSync(join(dir, 'events.json'))) throw new Error('not a recording folder')
+    const tmp = join(dir, 'project.json.tmp')
+    await writeFile(tmp, JSON.stringify(file, null, 1), 'utf8')
+    await rename(tmp, join(dir, 'project.json'))   // atomic: project.json is always complete (spec §82)
+  })
   ipcMain.handle('project:export', async (_e, dir: string, config: RenderConfig) => {
     const p = loadProject(dir); if (!p) throw new Error('project not found')
     const send = (prog: ExportProgress) => win?.webContents.send('export:progress', prog)

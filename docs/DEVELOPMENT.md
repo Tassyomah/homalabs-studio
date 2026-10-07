@@ -30,6 +30,10 @@ Check the recorder without the app:
 python recorder\narrate_win.py --list        # displays and microphones
 python recorder\narrate_win.py --check       # {"screen": true, "mic": "authorized"|"denied"|"unknown"}
 python recorder\tests\smoke_win.py           # records the primary display for ~5 s into %TEMP%\narrate-smoke and validates it
+python recorder\tests\smoke_win.py --camera  # same, plus the first camera (picks its best format ≤1080p at ≥24 fps)
+python recorder\tests\smoke_win.py --system-audio   # same, plus computer sound (WASAPI loopback; the test beeps so there is something to capture)
+python recorder\win_loopback.py out.wav 3    # loopback self-test: records 3 s with two beeps and prints the sync error
+python recorder\tests\crash_win.py           # kills the recorder mid-recording, checks ffmpeg died with it, recovers
 python recorder\narrate_win.py meter         # microphone level lines until you press Ctrl-C
 python recorder\narrate_win.py finalize --out <dir>   # finish a recording whose recorder died (what the app's "Restore" does)
 ```
@@ -51,6 +55,13 @@ With Xcode installed, build the ScreenCaptureKit recorder with `make` in `record
 ## Export
 Export renders the same Remotion composition the editor previews (`app/src/video`). The first export downloads
 Remotion's headless Chrome (needs internet once). Output lands next to the recording as `<stamp>-narrate.mp4`.
+
+## Screenshots of the app (for reviews and docs)
+```powershell
+$env:NARRATE_SCREENSHOT = "$env:TEMP\home.png"; npm run dev          # saves the main window ~2.5 s after load, then quits
+$env:NARRATE_OPEN = "$env:USERPROFILE\Videos\Narrate\<stamp>"; $env:NARRATE_SCREENSHOT_DELAY = "7000"; npm run dev   # opens that recording in the editor first
+```
+Unset the variables afterwards (`Remove-Item Env:NARRATE_SCREENSHOT`). The hook only captures the app's own window, never the screen.
 
 ## Conventions
 - Raw media are never modified after finalisation. Edits are instructions in the project (pauses today; cuts, zooms, masks next).

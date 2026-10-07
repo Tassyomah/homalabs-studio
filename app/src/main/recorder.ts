@@ -38,6 +38,8 @@ export class Recorder extends EventEmitter {
     this.currentOut = opts.out
     const args = [this.script, 'record', '--out', opts.out, '--fps', String(opts.fps), '--screen', String(opts.screen)]
     if (opts.mic === null) args.push('--no-mic'); else args.push('--mic', String(opts.mic))
+    if (opts.camera !== null && opts.camera !== undefined) args.push('--camera', String(opts.camera))
+    if (opts.systemAudio) args.push('--system-audio')
     return new Promise((res, rej) => {
       const p = spawn(PYTHON, args, { stdio: ['pipe', 'pipe', 'pipe'], ...SPAWN })
       this.proc = p

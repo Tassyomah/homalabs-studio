@@ -5,7 +5,7 @@ Same command line and line protocol as recorder/narrate.py (macOS), so the app d
 
     narrate_win.py --list                 devices (JSON)
     narrate_win.py --check [--request]    permission state (JSON); --request opens Windows' microphone privacy page
-    narrate_win.py record --out DIR [--fps 60] [--screen N] [--mic N | --no-mic]
+    narrate_win.py record --out DIR [--fps 60] [--screen N] [--mic N | --no-mic] [--camera N] [--system-audio]
     narrate_win.py finalize --out DIR     finish a recording whose process died (crash recovery, spec §62)
     narrate_win.py meter [--mic N]        microphone level, one {"level": 0..1} line every 100 ms until stdin closes
 
@@ -16,7 +16,9 @@ Protocol (one JSON object per line):
   stdout → {"event":"started"|"paused"|"resumed"|"stopped"|"finalizing"|"ready"|"error", ...}
   stdin  ← {"cmd":"pause"|"resume"|"stop"}      (a bare newline, a closed stdin or Ctrl-C also stops)
 
-Output folder: screen.mp4 (cursor hidden), mic.wav, events.json, cursors/*.png.
+Output folder: screen.mp4 (cursor hidden), mic.wav, camera.mp4 (when a camera was chosen), system.wav (with
+--system-audio, via WASAPI loopback in win_loopback.py), events.json, cursors/*.png.
+The camera is a separate file on the shared clock (`t0Camera`, `cameraOffset`), never baked into the screen (spec §10).
 
 Time base: Windows system time as Unix seconds (time.time()). Video and audio are captured by two
 independent ffmpeg processes, each with `-use_wallclock_as_timestamps 1 -copyts`, so every packet is
@@ -135,25 +137,49 @@ def displays():
     return out
 
 # ---------------------------------------------------------------- devices / permissions
-def dshow_audio_devices():
-    """[(friendly name, alternative name)] — the alternative name is unique even with two identical mics."""
+_dshow_cache = None
+def dshow_devices():
+    """{"audio": [(name, alt)], "video": [(name, alt)]} — the alternative name is unique even with two identical devices."""
+    global _dshow_cache
+    if _dshow_cache is not None: return _dshow_cache
+    out = {"audio": [], "video": []}
     try: err = run([FFMPEG, "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"]).stderr
-    except Exception: return []
-    devs, cur = [], None
+    except Exception: return out
+    cur = None
     for line in err.splitlines():
         m = re.search(r'"(.+)" \(([^)]*)\)\s*$', line)
         if m:
-            cur = {"name": m.group(1), "alt": None} if "audio" in m.group(2) else None
-            if cur: devs.append(cur)
+            kinds = [k for k in ("audio", "video") if k in m.group(2)]
+            cur = {"name": m.group(1), "alt": None, "kinds": kinds} if kinds else None
             continue
         m = re.search(r'Alternative name "(.+)"', line)
-        if m and cur: cur["alt"] = m.group(1)
-    return [(d["name"], d["alt"] or d["name"]) for d in devs]
+        if m and cur:
+            for k in cur["kinds"]: out[k].append((cur["name"], m.group(1)))
+            cur = None
+    _dshow_cache = out
+    return out
+
+def dshow_audio_devices(): return dshow_devices()["audio"]
+def dshow_video_devices(): return dshow_devices()["video"]
+
+def camera_format(alt, want_fps=30):
+    """Best format the camera offers: largest frame at >= 24 fps, capped at 1080p, MJPEG preferred at equal size.
+    → (width, height, fps, codec_or_pixel_format) or None to let dshow choose."""
+    try: err = run([FFMPEG, "-hide_banner", "-list_options", "true", "-f", "dshow", "-i", f"video={alt}"], timeout=20).stderr
+    except Exception: return None
+    best = None
+    for m in re.finditer(r'(pixel_format|vcodec)=(\S+)\s+min s=\d+x\d+ fps=[\d.]+\s+max s=(\d+)x(\d+) fps=([\d.]+)', err):
+        kind, fmt, w, h, fps = m.group(1), m.group(2), int(m.group(3)), int(m.group(4)), float(m.group(5))
+        if fps < 24 or w > 1920: continue
+        key = (w * h, fmt == "mjpeg", fps)
+        if best is None or key > best[0]: best = (key, (w, h, min(int(fps), want_fps), kind, fmt))
+    return best[1] if best else None
 
 def devices_json():
-    disp = displays(); mics = dshow_audio_devices() if FFMPEG else []
+    disp = displays(); dev = dshow_devices() if FFMPEG else {"audio": [], "video": []}
     return {"screens": [{"index": k, "name": d["name"]} for k, d in enumerate(disp)],
-            "mics": [{"index": i, "name": n} for i, (n, _) in enumerate(mics)],
+            "mics": [{"index": i, "name": n} for i, (n, _) in enumerate(dev["audio"])],
+            "cameras": [{"index": i, "name": n} for i, (n, _) in enumerate(dev["video"])],
             "displays": [{"ordinal": k, "id": d["id"], "width": d["width"], "height": d["height"], "name": d["name"]} for k, d in enumerate(disp)]}
 
 def mic_permission():
@@ -376,7 +402,7 @@ def meter(args):
 # ---------------------------------------------------------------- helpers
 def probe(path):
     try:
-        out = run([FFPROBE, "-v", "error", "-show_entries", "stream=start_time,duration,nb_frames,codec_type", "-of", "json", path]).stdout
+        out = run([FFPROBE, "-v", "error", "-show_entries", "stream=start_time,duration,nb_frames,codec_type,width,height", "-of", "json", path]).stdout
         return json.loads(out)["streams"][0]
     except Exception: return {}
 
@@ -466,6 +492,16 @@ def audio_cmd(mic, path):
             "-f", "dshow", "-use_wallclock_as_timestamps", "1", "-rtbufsize", "256M", "-audio_buffer_size", str(MIC_BUFFER_MS),
             "-i", f"audio={mic[1]}", "-copyts", "-c:a", "pcm_s16le", "-ar", "48000", path]   # Matroska: crash-tolerant
 
+def camera_cmd(cam, fmt, enc, extra, path):
+    cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-thread_queue_size", "1024",
+           "-f", "dshow", "-use_wallclock_as_timestamps", "1", "-rtbufsize", "256M"]
+    if fmt:
+        w, h, fps, kind, f = fmt
+        cmd += ["-video_size", f"{w}x{h}", "-framerate", str(fps), "-vcodec" if kind == "vcodec" else "-pixel_format", f]
+    cmd += ["-i", f"video={cam[1]}", "-copyts", "-c:v", enc, *extra, "-pix_fmt", pix_fmt(enc), "-g", "30"]
+    cmd += ["-crf", "20"] if enc == "libx264" else ["-b:v", "6M", "-maxrate", "9M", "-bufsize", "12M"]
+    return cmd + [path]
+
 # ---------------------------------------------------------------- record
 def record(args):
     need_ffmpeg()
@@ -488,15 +524,31 @@ def record(args):
         if mics: mic = mics[args.mic] if args.mic is not None and 0 <= args.mic < len(mics) else mics[0]
         elif args.mic is not None:
             emit(event="error", code="no_mic", message="The selected microphone is no longer available. Choose another microphone."); sys.exit(3)
+    cam = None
+    if args.camera is not None:
+        cams = dshow_video_devices()
+        if 0 <= args.camera < len(cams): cam = cams[args.camera]
+        else: emit(event="error", code="no_camera", message="The selected camera is no longer available. Choose another camera."); sys.exit(3)
 
     enc, extra = pick_encoder()
-    raw_video = os.path.join(outdir, "screen.mkv"); mic_path = os.path.join(outdir, "mic.mka")
+    raw_video = os.path.join(outdir, "screen.mkv"); mic_path = os.path.join(outdir, "mic.mka"); cam_path = os.path.join(outdir, "camera.mkv")
     t_launch = now()
     setup = {"version": 1, "display": disp, "fps": args.fps, "tLaunch": t_launch, "encoder": enc, "mic": mic[0] if mic else None,
-             "startedAt": datetime.now().isoformat(timespec="seconds")}
+             "camera": cam[0] if cam else None, "systemAudio": bool(args.system_audio), "startedAt": datetime.now().isoformat(timespec="seconds")}
     with open(os.path.join(outdir, "recording.json"), "w") as fh: json.dump(setup, fh)   # presence without events.json = unfinished
 
+    loopback = None
+    if args.system_audio:
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from win_loopback import Loopback
+            loopback = Loopback(os.path.join(outdir, "system.raw.wav")); loopback.start()
+            log(f"[system] WASAPI loopback: {loopback.format}")
+        except Exception as e:
+            log(f"[system] loopback unavailable: {e}"); loopback = None
+
     audio = Capture("mic", audio_cmd(mic, mic_path), mic_path) if mic else None
+    camera = Capture("camera", camera_cmd(cam, camera_format(cam[1]), enc, extra, cam_path), cam_path) if cam else None
     video = Capture("screen", video_cmd("ddagrab", d, w, h, args.fps, enc, extra, raw_video), raw_video)
     mode = "ddagrab"
     if not video.wait_for_data(6):
@@ -505,20 +557,28 @@ def record(args):
         video = Capture("screen", video_cmd("gdigrab", d, w, h, args.fps, enc, extra, raw_video), raw_video)
         if not video.wait_for_data(8):
             video.kill()
-            if audio: audio.kill()
+            for c in (audio, camera):
+                if c: c.kill()
             emit(event="error", code="no_frames", message="The screen capture produced no frames.\n" + video.tail()); sys.exit(4)
     setup["capture"] = mode
     with open(os.path.join(outdir, "recording.json"), "w") as fh: json.dump(setup, fh)
-    warning = None
+    warnings = []
     if audio and not audio.wait_for_data(4, min_bytes=1024):
         audio.kill(); audio = None
-        warning = "The microphone could not be started; recording without audio.\n" + video.tail(2)
-        log("[recorder] " + warning)
+        warnings.append("The microphone could not be started; recording without audio. " + audio.tail(1) if False else "The microphone could not be started; recording without audio.")
+    if camera and not camera.wait_for_data(8, min_bytes=4096):
+        tail = camera.tail(2); camera.kill(); camera = None
+        warnings.append("The camera could not be started; recording without it. " + tail)
+    if args.system_audio and not loopback:
+        warnings.append("System audio could not be captured on this device; recording without it.")
+    for w_ in warnings: log("[recorder] " + w_)
+    warning = "\n".join(warnings) or None
 
     journal = Journal(os.path.join(outdir, "events.partial.jsonl"))
     cl = CursorLog(d, outdir, journal); th = threading.Thread(target=cl.run, daemon=True); th.start()
     pauses = []
-    emit(event="started", out=outdir, display=disp, tLaunch=t_launch, encoder=enc, capture=mode, mic=mic[0] if audio else None, warning=warning)
+    emit(event="started", out=outdir, display=disp, tLaunch=t_launch, encoder=enc, capture=mode, mic=mic[0] if audio else None,
+         camera=cam[0] if camera else None, systemAudio=bool(loopback), warning=warning)
 
     stopped = threading.Event()
     def do_stop(*_): stopped.set()
@@ -540,17 +600,27 @@ def record(args):
     try: signal.signal(signal.SIGBREAK, do_stop)
     except (AttributeError, ValueError): pass
 
+    sys_t0_written = False
     while not stopped.is_set():
         if not video.alive():
             emit(event="error", code="ffmpeg_died", message="Capture stopped unexpectedly.\n" + video.tail(8)); stopped.set()
         elif audio and not audio.alive():
             log("[recorder] microphone capture ended early: " + audio.tail(3)); audio = None   # keep the video going
+        elif camera and not camera.alive():
+            log("[recorder] camera capture ended early: " + camera.tail(3)); camera = None
+        if loopback and loopback.t0 is not None and not sys_t0_written:
+            setup["t0System"] = loopback.t0; sys_t0_written = True                           # the journal/setup carry it for recovery
+            with open(os.path.join(outdir, "recording.json"), "w") as fh: json.dump(setup, fh)
         stopped.wait(0.05)
     t_end = now()
     if pauses and pauses[-1][1] is None: pauses[-1][1] = round(t_end, 4)
     cl.stop.set(); th.join(timeout=1); journal.close()
     video.stop()
-    if audio: audio.stop()
+    for c in (audio, camera):
+        if c: c.stop()
+    if loopback:
+        loopback.stop()
+        if loopback.t0 is not None: setup["t0System"] = loopback.t0
     emit(event="stopped", out=outdir, duration=round(t_end - t_launch, 2))
     finalize(outdir, setup, t_end, capture=mode, log_data=(cl.moves, cl.clicks, cl.cursorChanges, cl.cursors, pauses))
 
@@ -585,14 +655,36 @@ def finalize(outdir, setup, t_end, capture=None, log_data=None):
             t0m = float(st) - MIC_BUFFER_MS / 1000.0                  # packets are stamped on arrival; the first sample is one buffer older
             setup["t0Mic"] = t0m; os.remove(mic_path)
     elif os.path.exists(wav) and setup.get("t0Mic") is not None: t0m = float(setup["t0Mic"])
+    # camera: same treatment as the screen (Matroska → faststart MP4), origin kept in setup for re-runs
+    cam_raw = os.path.join(outdir, "camera.mkv"); cam_mp4 = os.path.join(outdir, "camera.mp4"); t0c = None; cam_info = None
+    if os.path.exists(cam_raw):
+        emit(event="finalizing", step="video")
+        st = probe(cam_raw).get("start_time")
+        run([FFMPEG, "-v", "error", "-y", "-i", cam_raw, "-c", "copy", "-movflags", "+faststart", cam_mp4], timeout=600)
+        if st is not None and os.path.exists(cam_mp4) and os.path.getsize(cam_mp4) > 0:
+            t0c = float(st); setup["t0Camera"] = t0c; os.remove(cam_raw)
+    elif os.path.exists(cam_mp4) and setup.get("t0Camera") is not None: t0c = float(setup["t0Camera"])
+    if t0c is not None:
+        cp = probe(cam_mp4); cam_info = {"width": int(cp.get("width", 0) or 0), "height": int(cp.get("height", 0) or 0), "duration": float(cp.get("duration", 0) or 0)}
+    # system audio: raw float WAV from WASAPI loopback → 48 kHz s16; its origin is the first packet's wall-clock time
+    sys_raw = os.path.join(outdir, "system.raw.wav"); sys_wav = os.path.join(outdir, "system.wav"); t0s = None
+    if os.path.exists(sys_raw) and setup.get("t0System") is not None:
+        emit(event="finalizing", step="audio")
+        run([FFMPEG, "-v", "error", "-y", "-i", sys_raw, "-c:a", "pcm_s16le", "-ar", "48000", sys_wav], timeout=600)
+        if os.path.exists(sys_wav) and os.path.getsize(sys_wav) > 1000: t0s = float(setup["t0System"]); os.remove(sys_raw)
+    elif os.path.exists(sys_wav) and setup.get("t0System") is not None: t0s = float(setup["t0System"])
+    if os.path.exists(sys_raw) and t0s is None: os.remove(sys_raw)       # nothing ever played, or no origin: drop it
     events = {"version": 2, "display": setup["display"], "fps": setup["fps"], "tLaunch": setup["tLaunch"], "tEnd": t_end,
-              "t0Video": t0v, "t0Mic": t0m,
+              "t0Video": t0v, "t0Mic": t0m, "t0Camera": t0c, "t0System": t0s,
               "videoDuration": float(vid.get("duration", 0) or 0), "videoFrames": int(vid.get("nb_frames", 0) or 0),
               "micOffset": (t0m - t0v) if t0m is not None else None,
+              "cameraOffset": (t0c - t0v) if t0c is not None else None, "camera": cam_info,
+              "systemOffset": (t0s - t0v) if t0s is not None else None,
               "pauses": pauses, "platform": "win32", "encoder": setup.get("encoder"), "capture": capture,
               "recovered": log_data is None,
               "cursors": cursors, "cursorChanges": changes, "moves": moves, "clicks": clicks, "scrolls": [],
-              "files": {"screen": "screen.mp4", "mic": "mic.wav" if t0m is not None else None}}
+              "files": {"screen": "screen.mp4", "mic": "mic.wav" if t0m is not None else None, "camera": "camera.mp4" if t0c is not None else None,
+                        "system": "system.wav" if t0s is not None else None}}
     tmp = os.path.join(outdir, "events.json.tmp")
     with open(tmp, "w") as fh: json.dump(events, fh)
     os.replace(tmp, os.path.join(outdir, "events.json"))              # atomic: events.json is complete or absent
@@ -620,6 +712,7 @@ def main():
     ap.add_argument("cmd", nargs="?", default="record")
     ap.add_argument("--out"); ap.add_argument("--fps", type=int, default=60)
     ap.add_argument("--screen", type=int, default=0); ap.add_argument("--mic", type=int); ap.add_argument("--no-mic", action="store_true")
+    ap.add_argument("--camera", type=int); ap.add_argument("--system-audio", action="store_true")
     ap.add_argument("--list", action="store_true"); ap.add_argument("--check", action="store_true"); ap.add_argument("--request", action="store_true")
     args = ap.parse_args()
     if args.list: print(json.dumps(devices_json())); return

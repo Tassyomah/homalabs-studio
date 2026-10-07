@@ -23,10 +23,17 @@ export interface RecordingEvents {
   scrolls: unknown[]
   micOffset: number | null
   pauses?: [number, number][]
+  /** Camera (spec §10): its own file on the shared clock, composited at render time, never baked in. */
+  t0Camera?: number | null
+  cameraOffset?: number | null
+  camera?: { width: number; height: number; duration: number } | null
+  /** System audio (spec §15): its own file on the shared clock. */
+  t0System?: number | null
+  systemOffset?: number | null
   /** Set by recorder/narrate_win.py; absent on macOS recordings. */
   platform?: Platform
   encoder?: string
-  files: { screen: string; mic: string | null }
+  files: { screen: string; mic: string | null; camera?: string | null; system?: string | null }
 }
 
 export interface Project {
@@ -36,10 +43,21 @@ export interface Project {
   events: RecordingEvents
   /** http URLs served by the app for the renderer + Remotion. */
   assets: ProjectAssets
+  /** Saved edits (project.json); null for a recording that has never been opened in the editor. */
+  file: ProjectFile | null
 }
-export interface ProjectAssets { screen: string; mic: string | null; cursors: Record<string, string> }
+
+/** project.json — every edit is an instruction here; raw media are never touched (spec §38, §60). Autosaved (§61). */
+export interface ProjectFile {
+  version: 1
+  config: RenderConfig
+  savedAt: string
+}
+export interface ProjectAssets { screen: string; mic: string | null; camera: string | null; system: string | null; cursors: Record<string, string> }
 
 export type Background = 'indigo' | 'coral' | 'ink' | 'paper'
+export type CameraShape = 'off' | 'circle' | 'rounded'
+export type CameraCorner = 'br' | 'bl' | 'tr' | 'tl'
 export interface RenderConfig {
   zoom: number          // 1 = off, 2 = Screen-Studio-like
   padding: number       // fraction of screen width on each side
@@ -47,15 +65,25 @@ export interface RenderConfig {
   background: Background
   cursorScale: number
   outputHeight: number  // 0 = source size
+  cameraShape: CameraShape
+  cameraSize: number    // fraction of screen width
+  cameraCorner: CameraCorner
+  cameraMirror: boolean // selfie view: flip horizontally
+  micVolume: number     // 0..1.5, 1 = as recorded
+  systemVolume: number  // 0..1.5, 0 = muted
 }
-export const defaultConfig: RenderConfig = { zoom: 2, padding: 0.06, radius: 24, background: 'indigo', cursorScale: 1.6, outputHeight: 1080 }
+export const defaultConfig: RenderConfig = {
+  zoom: 2, padding: 0.06, radius: 24, background: 'indigo', cursorScale: 1.6, outputHeight: 1080,
+  cameraShape: 'circle', cameraSize: 0.2, cameraCorner: 'br', cameraMirror: true,
+  micVolume: 1, systemVolume: 0.8,
+}
 
 export type ScreencastProps = { assets: ProjectAssets; events: RecordingEvents; config: RenderConfig; [k: string]: unknown }
 
 export type MicPermission = 'authorized' | 'denied' | 'restricted' | 'notDetermined' | 'unknown'
 export interface Permissions { screen: boolean; mic: MicPermission }
 export type RecorderEvent =
-  | { event: 'started'; out: string }
+  | { event: 'started'; out: string; mic?: string | null; camera?: string | null; systemAudio?: boolean; warning?: string | null }
   | { event: 'paused'; t: number } | { event: 'resumed'; t: number }
   | { event: 'stopped'; out: string; duration: number }
   | { event: 'finalizing'; step: 'video' | 'audio' }
@@ -67,9 +95,11 @@ export type RecState = 'idle' | 'countdown' | 'recording' | 'paused' | 'finalizi
 export interface Devices {
   screens: { index: number; name: string }[]
   mics: { index: number; name: string }[]
+  /** Absent from the macOS recorder for now. */
+  cameras?: { index: number; name: string }[]
   displays: { ordinal: number; id: number; width: number; height: number; name: string }[]
 }
-export interface StartOptions { screen: number; mic: number | null; fps: number }
+export interface StartOptions { screen: number; mic: number | null; camera?: number | null; systemAudio?: boolean; fps: number }
 /** A recording folder whose recorder died before writing events.json (recording.json still present). */
 export interface UnfinishedRecording { dir: string; name: string; startedAt: string; display: DisplayInfo; mic: string | null }
 export interface ExportProgress { progress: number; stage: 'bundling' | 'rendering' | 'done' | 'error'; message?: string; output?: string }
@@ -96,8 +126,11 @@ export interface NarrateApi {
   startMicMeter(mic: number): Promise<void>
   stopMicMeter(): Promise<void>
   onMicLevel(cb: (level: number) => void): () => void
+  saveProject(dir: string, file: ProjectFile): Promise<void>
   exportProject(dir: string, config: RenderConfig): Promise<string>
   onExportProgress(cb: (p: ExportProgress) => void): () => void
   reveal(path: string): Promise<void>
   trashProject(dir: string): Promise<void>
+  /** Developer screenshots only (NARRATE_OPEN): open a recording folder in the editor on launch. */
+  onDevOpen(cb: (dir: string) => void): () => void
 }

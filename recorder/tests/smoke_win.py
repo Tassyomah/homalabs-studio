@@ -1,19 +1,23 @@
 """Smoke test for recorder/narrate_win.py: drive it through the stdin/stdout protocol for ~5 s,
 move the mouse a little (position is restored), pause/resume once, stop, then validate the output.
 
-    python recorder/tests/smoke_win.py [OUT_DIR]
+    python recorder/tests/smoke_win.py [--camera] [OUT_DIR]
 
-It records the primary display, so run it only on a machine where that is fine.
+It records the primary display (and the first camera with --camera), so run it only on a machine where that is fine.
 Exit code 0 means every check passed. Nothing is written outside OUT_DIR (default: %TEMP%/narrate-smoke).
 """
 import ctypes, ctypes.wintypes as wt, json, os, shutil, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REC = os.path.join(HERE, "..", "narrate_win.py")
-OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(tempfile.gettempdir(), "narrate-smoke")
+CAMERA = "--camera" in sys.argv
+SYSTEM = "--system-audio" in sys.argv
+rest = [a for a in sys.argv[1:] if a not in ("--camera", "--system-audio")]
+OUT = rest[0] if rest else os.path.join(tempfile.gettempdir(), "narrate-smoke")
 if os.path.exists(OUT): shutil.rmtree(OUT)
 
-p = subprocess.Popen([sys.executable, REC, "record", "--out", OUT, "--fps", "60"],
+flags = (["--camera", "0"] if CAMERA else []) + (["--system-audio"] if SYSTEM else [])
+p = subprocess.Popen([sys.executable, REC, "record", "--out", OUT, "--fps", "60", *flags],
                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
 events = []
 def read_until(kind, timeout=30):
@@ -27,6 +31,9 @@ def read_until(kind, timeout=30):
 def send(cmd): p.stdin.write(json.dumps({"cmd": cmd}) + "\n"); p.stdin.flush()
 
 ev = read_until("started"); assert ev and ev["event"] == "started", ev
+if SYSTEM:
+    import threading, winsound
+    threading.Thread(target=lambda: (time.sleep(0.5), winsound.Beep(880, 300)), daemon=True).start()   # something to capture
 u = ctypes.windll.user32; pt = wt.POINT(); u.GetCursorPos(ctypes.byref(pt)); x0, y0 = pt.x, pt.y
 for i in range(60):
     u.SetCursorPos(x0 + (i % 20) * 3, y0 + (i % 10) * 2); time.sleep(0.03)
@@ -59,5 +66,13 @@ assert len(e["pauses"]) == 1 and 0.8 < e["pauses"][0][1] - e["pauses"][0][0] < 1
 if e["files"]["mic"]:
     assert os.path.getsize(os.path.join(OUT, "mic.wav")) > 100_000, "mic.wav is empty"
     assert abs(e["micOffset"]) < 1.0, f"mic offset implausible: {e['micOffset']}"
+if CAMERA:
+    assert e["files"].get("camera") == "camera.mp4" and os.path.getsize(os.path.join(OUT, "camera.mp4")) > 50_000, "camera.mp4 missing or empty"
+    assert e["camera"]["width"] >= 320 and abs(e["cameraOffset"]) < 2.0, f"camera: {e['camera']} offset {e['cameraOffset']}"
+    print("camera:", e["camera"], "offset", round(e["cameraOffset"], 3))
+if SYSTEM:
+    assert e["files"].get("system") == "system.wav" and os.path.getsize(os.path.join(OUT, "system.wav")) > 100_000, "system.wav missing or empty"
+    assert abs(e["systemOffset"]) < 2.0, f"system offset implausible: {e['systemOffset']}"
+    print("system audio offset", round(e["systemOffset"], 3))
 for c in e["cursors"].values(): assert os.path.exists(os.path.join(OUT, c["file"]))
 print("OK")

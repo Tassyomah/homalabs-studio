@@ -24,9 +24,11 @@ const api: NarrateApi = {
   startMicMeter: (mic) => ipcRenderer.invoke('mic:meter:start', mic),
   stopMicMeter: () => ipcRenderer.invoke('mic:meter:stop'),
   onMicLevel: listen<number>('mic:level'),
+  saveProject: (dir, file) => ipcRenderer.invoke('project:save', dir, file),
   exportProject: (dir, config) => ipcRenderer.invoke('project:export', dir, config),
   onExportProgress: listen<ExportProgress>('export:progress'),
   reveal: (p) => ipcRenderer.invoke('shell:reveal', p),
+  onDevOpen: listen<string>('dev:open'),
   trashProject: (dir) => ipcRenderer.invoke('project:trash', dir),
 }
 contextBridge.exposeInMainWorld('narrate', api)

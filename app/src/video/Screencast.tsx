@@ -28,6 +28,11 @@ const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: Projec
   const ripple = ev.clicks.find((c) => c.type === 'down' && t - (c.t - ev.t0Video) >= 0 && t - (c.t - ev.t0Video) < 0.45)
   const rp = ripple ? (t - (ripple.t - ev.t0Video)) / 0.45 : 0
   const micStart = srcStart - (ev.micOffset ?? 0)   // seconds into mic.wav where this segment begins
+  const camStart = srcStart - (ev.cameraOffset ?? 0)
+  const sysStart = srcStart - (ev.systemOffset ?? 0)
+  // The camera starts a moment after the screen; show the overlay only once it has frames (no black box at the start).
+  const cameraHasFrames = t - (ev.cameraOffset ?? 0) >= 0 && (!ev.camera?.duration || t - (ev.cameraOffset ?? 0) <= ev.camera.duration)
+  const webcam = assets.camera && ev.camera && cfg.cameraShape !== 'off' && cameraHasFrames ? cameraRect(cfg, ev.camera, W, H) : null
 
   return (
     <>
@@ -46,11 +51,42 @@ const Segment: React.FC<{ ev: RecordingEvents; cfg: RenderConfig; assets: Projec
           )}
         </div>
       </div>
-      {assets.mic && (micStart >= 0
-        ? <Audio src={assets.mic} startFrom={Math.round(micStart * fps)} />
-        : <Sequence from={Math.round(-micStart * fps)}><Audio src={assets.mic} /></Sequence>)}
+      {webcam && assets.camera && (
+        // Camera overlay sits over the screen frame and stays put while the screen zooms (spec §10, §11).
+        <div style={{ position: 'absolute', left: pad + webcam.x, top: (CH - H) / 2 + webcam.y, width: webcam.w, height: webcam.h,
+                      borderRadius: webcam.radius, overflow: 'hidden', boxShadow: '0 24px 70px rgba(20,20,15,0.4)', background: '#14140F' }}>
+          <TimedVideo src={assets.camera} start={camStart} fps={fps}
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: cfg.cameraMirror ? 'scaleX(-1)' : undefined }} />
+        </div>
+      )}
+      {assets.mic && cfg.micVolume > 0 && <TimedAudio src={assets.mic} start={micStart} fps={fps} volume={cfg.micVolume} />}
+      {assets.system && cfg.systemVolume > 0 && <TimedAudio src={assets.system} start={sysStart} fps={fps} volume={cfg.systemVolume} />}
     </>
   )
+}
+
+/** An audio track whose own time axis starts `start` seconds into this segment (negative = it begins later). */
+const TimedAudio: React.FC<{ src: string; start: number; fps: number; volume: number }> = ({ src, start, fps, volume }) =>
+  start >= 0
+    ? <Audio src={src} startFrom={Math.round(start * fps)} volume={volume} />
+    : <Sequence from={Math.round(-start * fps)} layout="none"><Audio src={src} volume={volume} /></Sequence>
+
+/** A video whose own time axis starts `start` seconds into this segment (negative = it begins later than the segment). */
+const TimedVideo: React.FC<{ src: string; start: number; fps: number; style: React.CSSProperties }> = ({ src, start, fps, style }) =>
+  start >= 0
+    ? <OffthreadVideo src={src} muted startFrom={Math.round(start * fps)} style={style} />
+    : <Sequence from={Math.round(-start * fps)} layout="none"><OffthreadVideo src={src} muted style={style} /></Sequence>
+
+/** Camera box in screen-pixel space, relative to the screen frame's top-left. */
+export function cameraRect(cfg: RenderConfig, camera: { width: number; height: number }, W: number, H: number) {
+  const w = Math.round(W * cfg.cameraSize)
+  const aspect = camera.width && camera.height ? camera.width / camera.height : 4 / 3
+  const h = cfg.cameraShape === 'circle' ? w : Math.round(w / aspect)
+  const margin = Math.round(W * 0.025)
+  const x = cfg.cameraCorner.endsWith('l') ? margin : W - w - margin
+  const y = cfg.cameraCorner.startsWith('t') ? margin : H - h - margin
+  const radius = cfg.cameraShape === 'circle' ? w / 2 : Math.round(w * 0.12)
+  return { x, y, w, h, radius }
 }
 
 /**
