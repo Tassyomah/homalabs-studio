@@ -35,6 +35,7 @@ Windows also has: crash recovery (journal + `finalize`; home screen shows Restor
 Editor also has: project.json autosave (config + cuts, merged over defaults), timeline in source time (kept / pause / cut / clicks / playhead, click to seek), Trim start/end here, Cut from here…to here, Restore per cut, Undo/Redo (Ctrl+Z / Ctrl+Y), output vs recorded duration readout.
 Phase 1 on Windows is feature-complete except window/region capture and a camera preview before recording.
 **macOS (2026-10-07):** `recorder/narrate.py` rewritten on the shared `recorder/common.py` — camera, crash journal + recovery, shortcut log, meter, analyze, transcribe, enhance all present; system audio still needs the Swift/ScreenCaptureKit recorder. NOT YET RUN ON A MAC: first thing on her Mac is `python3 recorder/narrate.py --list`, then a short recording, then `npm run dev`. Expect small PyObjC/avfoundation fixes.
+GitHub note (2026-10-07): pushes failed for ~1 h with a GitHub-side Internal Server Error on every ref; it cleared by itself. If it happens again, keep committing locally and retry later — the API still works.
 
 Also done (evening): aspect presets Screen / 16:9 / 9:16 / 1:1 / 4:5 with content-aware reframing (portrait/square crop and follow the cursor; exports get exact platform sizes), and Smart Director v1 (`analyze` subcommand → analysis.json; card under the timeline; Accept/Reject → cuts, chapters, highlights in project.json). Verified: 9:16 export 720×1280 with camera top-right; analysis on the test clip; editor screenshots (`NARRATE_SCREENSHOT`).
 Test recording used for screenshots: `%USERPROFILE%\Videos\Narrate\zz-smoke-test` (my 12 s capture of her screen; safe to delete).
@@ -49,7 +50,8 @@ Test recording used for screenshots: `%USERPROFILE%\Videos\Narrate\zz-smoke-test
 7. ✅ Privacy masks (Mask here; blur / solid; sliders for box and end time).
 8. ✅ Content card: thumbnail candidates (renderStill) + title / description / LinkedIn copy from the transcript and chapters, with Copy buttons (`scripts/thumbs.ts` for the CLI).
 9. ✅ Shared `common.py`; macOS recorder ported to parity (untested on a Mac). Trim can no longer delete the whole video. Matroska clusters flushed every second.
-10. Next: remaining add-on sections (§19+ once she pastes them), bundling Python + ffmpeg into the installer, keyboard-shortcut keycaps (§46), drag-to-place for masks/zooms on the preview, audio normalisation (§16), macOS parity. The CI workflow file sits untracked until she runs `gh auth refresh -s workflow`. Rebuild + reinstall (`npm run dist`, then the setup exe with /S) so her installed app has the newest features — last installed build predates zooms/speeds/masks/content.
+10. ✅ Smart-zoom dwell filter + pan-to-nearby; camera preview on Home; export presets (YouTube / Shorts / Instagram / LinkedIn / Web); trim guard.
+11. Next: remaining add-on sections (§19+ once she pastes them), bundling Python + ffmpeg into the installer, keyboard-shortcut keycaps (§46), drag-to-place for masks/zooms on the preview, audio normalisation (§16), macOS parity. The CI workflow file sits untracked until she runs `gh auth refresh -s workflow`. Rebuild + reinstall (`npm run dist`, then the setup exe with /S) so her installed app has the newest features — last installed build predates zooms/speeds/masks/content.
 Known limits of both interim recorders: control bar appears in the capture; no window/region; no system audio. Windows multi-monitor ddagrab index order is assumed, untested (one display here).
 
 ## On a new machine
