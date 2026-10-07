@@ -26,7 +26,7 @@ const api: NarrateApi = {
   onMicLevel: listen<number>('mic:level'),
   saveProject: (dir, file) => ipcRenderer.invoke('project:save', dir, file),
   analyzeProject: (dir, force) => ipcRenderer.invoke('project:analyze', dir, !!force),
-  exportProject: (dir, config, cuts) => ipcRenderer.invoke('project:export', dir, config, cuts),
+  exportProject: (dir, config, cuts, suffix) => ipcRenderer.invoke('project:export', dir, config, cuts, suffix),
   onExportProgress: listen<ExportProgress>('export:progress'),
   reveal: (p) => ipcRenderer.invoke('shell:reveal', p),
   onDevOpen: listen<string>('dev:open'),

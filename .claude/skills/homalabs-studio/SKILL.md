@@ -35,11 +35,14 @@ Windows also has: crash recovery (journal + `finalize`; home screen shows Restor
 Editor also has: project.json autosave (config + cuts, merged over defaults), timeline in source time (kept / pause / cut / clicks / playhead, click to seek), Trim start/end here, Cut from here…to here, Restore per cut, Undo/Redo (Ctrl+Z / Ctrl+Y), output vs recorded duration readout.
 Phase 1 on Windows is feature-complete except window/region capture and a camera preview before recording. macOS lacks recovery, meter, camera and system audio (needs the same subcommands/flags in narrate.py / Swift).
 
+Also done (evening): aspect presets Screen / 16:9 / 9:16 / 1:1 / 4:5 with content-aware reframing (portrait/square crop and follow the cursor; exports get exact platform sizes), and Smart Director v1 (`analyze` subcommand → analysis.json; card under the timeline; Accept/Reject → cuts, chapters, highlights in project.json). Verified: 9:16 export 720×1280 with camera top-right; analysis on the test clip; editor screenshots (`NARRATE_SCREENSHOT`).
+Test recording used for screenshots: `%USERPROFILE%\Videos\Narrate\zz-smoke-test` (my 12 s capture of her screen; safe to delete).
+
 ## Roadmap (SPEC-ADDON, agreed 2026-10-06)
-1. Aspect presets (16:9 / 9:16 / 1:1 / 4:5 / source) with content-aware reframing: the viewport follows the zoom target; camera repositions. Needed by every derivative asset.
-2. Analysis layer (local, ffmpeg + events.json → `analysis.json` per recording): mic silences (`silencedetect`), screen changes (`select=gt(scene,…)`), idle stretches, click clusters, interaction density. Smart Director panel: proposals (REMOVE / ZOOM / SPEED / CHAPTER) with reason + confidence, Apply all / Review / Dismiss; accepted ones become cuts / zoom keys / chapters in project.json.
-3. Project model: master + `assets[]` derivatives (segments, aspect, config overrides, createdFromVersion). Asset Studio list on the editor; Quick Demo / LinkedIn / Vertical teaser / Clips generated from analysis; each opens in the same editor; Export all.
-4. Then transcript/captions (Phase 5), zoom editing, masks, GIF export.
+1. ✅ Aspect presets with content-aware reframing.
+2. ✅ Smart Director v1 (local signals → proposals). Later: SPEED proposals for repetitive navigation, sensitive-info warnings, transcript-based signals.
+3. Project model: master + `assets[]` derivatives (segments, aspect, config overrides, createdFromVersion). Asset Studio list on the editor; Quick Demo / LinkedIn / Vertical teaser / Clips generated from analysis (highlights + chapters); each opens in the same editor; Export all.
+4. Then transcript/captions (Phase 5), zoom editing, masks, GIF export, content map UI from chapters.
 Known limits of both interim recorders: control bar appears in the capture; no window/region; no system audio. Windows multi-monitor ddagrab index order is assumed, untested (one display here).
 
 ## On a new machine

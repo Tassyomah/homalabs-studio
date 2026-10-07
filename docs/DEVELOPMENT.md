@@ -57,6 +57,12 @@ With Xcode installed, build the ScreenCaptureKit recorder with `make` in `record
 Export renders the same Remotion composition the editor previews (`app/src/video`). The first export downloads
 Remotion's headless Chrome (needs internet once). Output lands next to the recording as `<stamp>-narrate.mp4`.
 
+## Derivative assets from the command line
+```powershell
+npx tsx scripts/assets.ts "$env:USERPROFILE\Videos\Narrate\<stamp>"          # print what "Generate assets" would make
+npx tsx scripts/assets.ts "$env:USERPROFILE\Videos\Narrate\<stamp>" --write  # store them in project.json
+```
+
 ## Screenshots of the app (for reviews and docs)
 ```powershell
 $env:NARRATE_SCREENSHOT = "$env:TEMP\home.png"; npm run dev          # saves the main window ~2.5 s after load, then quits

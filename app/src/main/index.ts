@@ -184,10 +184,10 @@ app.whenReady().then(async () => {
     }
     return JSON.parse(readFileSync(file, 'utf8'))
   })
-  ipcMain.handle('project:export', async (_e, dir: string, config: RenderConfig, cuts: Cut[] = []) => {
+  ipcMain.handle('project:export', async (_e, dir: string, config: RenderConfig, cuts: Cut[] = [], suffix?: string) => {
     const p = loadProject(dir); if (!p) throw new Error('project not found')
     const send = (prog: ExportProgress) => win?.webContents.send('export:progress', prog)
-    return exportProject(APP_ROOT, p, config, cuts, send)
+    return exportProject(APP_ROOT, p, config, cuts, send, suffix)
   })
   ipcMain.handle('shell:reveal', (_e, p: string) => shell.showItemInFolder(p))
   ipcMain.handle('project:trash', (_e, dir: string) => shell.trashItem(dir))

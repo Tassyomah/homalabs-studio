@@ -52,11 +52,29 @@ export type Cut = [number, number]
 
 export interface Chapter { t: number; title: string }
 
+/**
+ * A derivative of the master (add-on §4–5): the same recording with its own removed stretches and a few config
+ * overrides (aspect, camera…). Never a rendered file — always editable, always re-exportable from the master.
+ */
+export type AssetKind = 'quick' | 'linkedin' | 'vertical' | 'teaser' | 'clip'
+export interface DerivedAsset {
+  id: string
+  kind: AssetKind
+  name: string
+  cuts: Cut[]                      // its own removed stretches (the complement of its selected segments)
+  config: Partial<RenderConfig>    // overrides on top of the master config
+  createdAt: string
+  fromMasterSavedAt: string | null // which master state it was generated from
+  note?: string                    // why the generator chose what it chose
+}
+export const ASSET_LABEL: Record<AssetKind, string> = { quick: 'Quick Demo', linkedin: 'LinkedIn', vertical: 'Vertical Teaser', teaser: '15s Teaser', clip: 'Clip' }
+
 /** project.json — every edit is an instruction here; raw media are never touched (spec §38, §60). Autosaved (§61). */
 export interface ProjectFile {
   version: 1
   config: RenderConfig
   cuts: Cut[]
+  assets?: DerivedAsset[]
   chapters?: Chapter[]
   /** Stand-alone moments (source seconds) the user kept from the Smart Director; future clip sources (add-on §19). */
   highlights?: [number, number][]
@@ -135,7 +153,7 @@ export interface Devices {
 export interface StartOptions { screen: number; mic: number | null; camera?: number | null; systemAudio?: boolean; fps: number }
 /** A recording folder whose recorder died before writing events.json (recording.json still present). */
 export interface UnfinishedRecording { dir: string; name: string; startedAt: string; display: DisplayInfo; mic: string | null }
-export interface ExportProgress { progress: number; stage: 'bundling' | 'rendering' | 'done' | 'error'; message?: string; output?: string }
+export interface ExportProgress { progress: number; stage: 'bundling' | 'rendering' | 'done' | 'error'; message?: string; output?: string; suffix?: string }
 
 export type Platform = 'darwin' | 'win32' | 'linux'
 
@@ -162,7 +180,8 @@ export interface NarrateApi {
   saveProject(dir: string, file: ProjectFile): Promise<void>
   /** Smart Director: cached analysis.json, or run the analysis (force = redo). Progress arrives via onRecorderEvent 'analyzing'. */
   analyzeProject(dir: string, force?: boolean): Promise<Analysis>
-  exportProject(dir: string, config: RenderConfig, cuts: Cut[]): Promise<string>
+  /** Render one asset of the recording; `suffix` names the output file (`<stamp>-<suffix>.mp4`). */
+  exportProject(dir: string, config: RenderConfig, cuts: Cut[], suffix?: string): Promise<string>
   onExportProgress(cb: (p: ExportProgress) => void): () => void
   reveal(path: string): Promise<void>
   trashProject(dir: string): Promise<void>

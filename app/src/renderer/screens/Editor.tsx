@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Player, type PlayerRef } from '@remotion/player'
 import { Screencast, compositionSize } from '../../video/Screencast'
 import { keptDuration, keptRanges, outToSrc, srcToOut } from '../../video/ranges'
-import { ASPECTS, defaultConfig, type Analysis, type Background, type CameraCorner, type CameraShape, type Chapter, type Cut, type ExportProgress, type Project, type Proposal, type RenderConfig, type ScreencastProps } from '../../shared/types'
+import { ASPECTS, ASSET_LABEL, defaultConfig, type Analysis, type Background, type CameraCorner, type CameraShape, type Chapter, type Cut, type DerivedAsset, type ExportProgress, type Project, type Proposal, type RenderConfig, type ScreencastProps } from '../../shared/types'
 import { revealLabel } from '../platform'
 import { Timeline, fmt } from './Timeline'
 import { Director, type DirectorState, type DirectorStatus } from './Director'
+import { generateAssets } from '../generate'
 
 const FPS = 60
+const fmtShort = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 const SHAPE: Record<CameraShape, string> = { off: 'Hidden', circle: 'Circle', rounded: 'Rounded' }
 const BGS: { id: Background; label: string; css: string }[] = [
   { id: 'indigo', label: 'Indigo', css: 'linear-gradient(135deg,#6E71E8,#8B78D6)' },
@@ -17,22 +19,29 @@ const BGS: { id: Background; label: string; css: string }[] = [
 ]
 
 /** Everything the user can change; one snapshot per undo step. */
-type Edits = { config: RenderConfig; cuts: Cut[]; chapters: Chapter[]; highlights: [number, number][]; director: DirectorState }
+type Edits = { config: RenderConfig; cuts: Cut[]; assets: DerivedAsset[]; chapters: Chapter[]; highlights: [number, number][]; director: DirectorState }
 
 export function Editor({ project }: { project: Project }) {
   // Saved edits win; defaults fill in settings that did not exist when the project was last saved.
   const [edits, setEdits] = useState<Edits>(() => ({
     config: { ...defaultConfig, ...(project.file?.config ?? {}) }, cuts: project.file?.cuts ?? [],
+    assets: project.file?.assets ?? [],
     chapters: project.file?.chapters ?? [], highlights: project.file?.highlights ?? [],
     director: project.file?.director ?? { accepted: [], rejected: [] },
   }))
-  const { config, cuts, chapters, highlights, director } = edits
+  const { assets, chapters, highlights, director } = edits
+  // Which asset is being edited: the master, or one derivative (add-on §5: derivatives stay editable).
+  const [selected, setSelected] = useState<string>('master')
+  const asset = assets.find((a) => a.id === selected) ?? null
+  const config: RenderConfig = asset ? { ...edits.config, ...asset.config } : edits.config
+  const cuts: Cut[] = asset ? asset.cuts : edits.cuts
   const [analysis, setAnalysis] = useState<Analysis | null>(null)
   const [dstatus, setDstatus] = useState<DirectorStatus>({ kind: 'idle' })
   const history = useRef<{ past: Edits[]; future: Edits[] }>({ past: [], future: [] })
   const dirty = useRef(false)
   const [, bump] = useState(0)
   const [prog, setProg] = useState<ExportProgress | null>(null)
+  const [queue, setQueue] = useState<{ total: number; done: number; current: string } | null>(null)
   const [playheadSrc, setPlayheadSrc] = useState(0)
   const [pendingCut, setPendingCut] = useState<number | null>(null)
   const playerRef = useRef<PlayerRef>(null)
@@ -48,7 +57,14 @@ export function Editor({ project }: { project: Project }) {
       return n
     })
   }, [])
-  const set = <K extends keyof RenderConfig>(k: K, v: RenderConfig[K]) => apply((e) => ({ ...e, config: { ...e.config, [k]: v } }))
+  /** Edit the selected asset's config (override) or the master's. */
+  const set = <K extends keyof RenderConfig>(k: K, v: RenderConfig[K]) => apply((e) => asset
+    ? { ...e, assets: e.assets.map((a) => a.id === asset.id ? { ...a, config: { ...a.config, [k]: v } } : a) }
+    : { ...e, config: { ...e.config, [k]: v } })
+  /** Edit the selected asset's cut list or the master's. */
+  const setCuts = (f: (c: Cut[]) => Cut[]) => apply((e) => asset
+    ? { ...e, assets: e.assets.map((a) => a.id === asset.id ? { ...a, cuts: f(a.cuts) } : a) }
+    : { ...e, cuts: f(e.cuts) })
   const undo = () => { const p = history.current.past.pop(); if (!p) return; history.current.future.push(edits); dirty.current = true; setEdits(p); bump((n) => n + 1) }
   const redo = () => { const f = history.current.future.pop(); if (!f) return; history.current.past.push(edits); dirty.current = true; setEdits(f); bump((n) => n + 1) }
 
@@ -56,11 +72,11 @@ export function Editor({ project }: { project: Project }) {
   useEffect(() => {
     if (!dirty.current) return
     const t = setTimeout(() => {
-      window.narrate.saveProject(project.dir, { version: 1, config, cuts, chapters, highlights, director, savedAt: new Date().toISOString() })
+      window.narrate.saveProject(project.dir, { version: 1, config: edits.config, cuts: edits.cuts, assets, chapters, highlights, director, savedAt: new Date().toISOString() })
         .catch((e) => console.warn('autosave failed', e))
     }, 400)
     return () => clearTimeout(t)
-  }, [config, cuts, chapters, highlights, director, project.dir])
+  }, [edits, assets, chapters, highlights, director, project.dir])
 
   // Smart Director (add-on §7–9): analyse on first open (cached in analysis.json afterwards), show progress meanwhile.
   const runAnalysis = useCallback((force = false) => {
@@ -114,16 +130,47 @@ export function Editor({ project }: { project: Project }) {
 
   // Cutting (spec §39): trim to the playhead, or mark a start then an end. All reversible.
   const dur = project.events.videoDuration
-  const addCut = (a: number, b: number) => { if (Math.abs(b - a) >= 0.1) apply((e) => ({ ...e, cuts: [...e.cuts, [Math.min(a, b), Math.max(a, b)]] })) }
+  const addCut = (a: number, b: number) => { if (Math.abs(b - a) >= 0.1) setCuts((c) => [...c, [Math.min(a, b), Math.max(a, b)]]) }
   const trimStart = () => addCut(0, playheadSrc)
   const trimEnd = () => addCut(playheadSrc, dur)
   const cutHere = () => { if (pendingCut === null) setPendingCut(playheadSrc); else { addCut(pendingCut, playheadSrc); setPendingCut(null) } }
-  const restore = (i: number) => apply((e) => ({ ...e, cuts: e.cuts.filter((_, k) => k !== i) }))
+  const restore = (i: number) => setCuts((c) => c.filter((_, k) => k !== i))
   const sortedCuts = cuts.map((c, i) => ({ c, i })).sort((x, y) => x.c[0] - y.c[0])
+
+  // Asset Studio (add-on §13): generate the standard set from the analysis; each is master + its own cuts + overrides.
+  const generate = () => apply((e) => ({ ...e, assets: generateAssets({
+    ev: project.events, analysis, masterCuts: e.cuts, chapters: e.chapters, highlights: e.highlights, masterSavedAt: project.file?.savedAt ?? null }) }))
+  const removeAsset = (id: string) => { if (selected === id) setSelected('master'); apply((e) => ({ ...e, assets: e.assets.filter((a) => a.id !== id) })) }
+  const assetDuration = (a: DerivedAsset | null) => keptDuration(project.events, a ? a.cuts : edits.cuts)
+  const exportOne = (a: DerivedAsset | null) => window.narrate.exportProject(project.dir, a ? { ...edits.config, ...a.config } : edits.config, a ? a.cuts : edits.cuts, a ? a.name : 'master')
+  const exportAll = async () => {
+    const list: (DerivedAsset | null)[] = [null, ...assets]
+    setQueue({ total: list.length, done: 0, current: 'Master' })
+    for (let i = 0; i < list.length; i++) {
+      setQueue({ total: list.length, done: i, current: list[i]?.name ?? 'Master' })
+      try { await exportOne(list[i]) } catch { /* progress shows the error for this asset; keep going */ }
+    }
+    setQueue(null)
+  }
 
   return (
     <div className="editor">
       <div className="work">
+        <div className="assets">
+          <button className={`chip ${selected === 'master' ? 'on' : ''}`} onClick={() => setSelected('master')}><b>Master</b><span>{fmtShort(assetDuration(null))}</span></button>
+          {assets.map((a) => (
+            <button key={a.id} className={`chip ${selected === a.id ? 'on' : ''}`} onClick={() => setSelected(a.id)} title={a.note}>
+              <b>{a.name}</b><span>{fmtShort(assetDuration(a))}{a.config.aspect ? ` · ${a.config.aspect}` : ''}</span>
+            </button>
+          ))}
+          <span className="gen">
+            <button onClick={generate} disabled={dstatus.kind === 'running'} title="Quick Demo, LinkedIn, Vertical Teaser, 15s Teaser and Clips, built from this recording">
+              {assets.length ? 'Regenerate assets' : 'Generate assets'}
+            </button>
+            {asset && <button onClick={() => removeAsset(asset.id)}>Remove {asset.name}</button>}
+          </span>
+        </div>
+        {asset && <p className="note">{ASSET_LABEL[asset.kind]} · {asset.note} Edits here change only this asset; the master is untouched.</p>}
         <div className="stage">
           <Player ref={playerRef} component={Screencast} inputProps={props} durationInFrames={frames} fps={FPS}
             compositionWidth={size.width} compositionHeight={size.height} controls
@@ -139,9 +186,9 @@ export function Editor({ project }: { project: Project }) {
           <button onClick={undo} disabled={history.current.past.length === 0} title="Undo (Ctrl+Z)">Undo</button>
           <button onClick={redo} disabled={history.current.future.length === 0} title="Redo (Ctrl+Y)">Redo</button>
         </div>
-        <Timeline ev={project.events} cuts={cuts} chapters={chapters} highlights={highlights} playhead={playheadSrc} pendingCut={pendingCut} onSeek={seekSrc} />
-        <Director analysis={analysis} status={dstatus} state={director} onAccept={onAccept} onReject={onReject} onAcceptAll={onAcceptAll}
-          onDismiss={onDismiss} onSeek={seekSrc} onRerun={() => runAnalysis(true)} />
+        <Timeline ev={project.events} cuts={cuts} chapters={asset ? [] : chapters} highlights={asset ? [] : highlights} playhead={playheadSrc} pendingCut={pendingCut} onSeek={seekSrc} />
+        {!asset && <Director analysis={analysis} status={dstatus} state={director} onAccept={onAccept} onReject={onReject} onAcceptAll={onAcceptAll}
+          onDismiss={onDismiss} onSeek={seekSrc} onRerun={() => runAnalysis(true)} />}
         {sortedCuts.length > 0 && (
           <div className="cuts">
             {sortedCuts.map(({ c, i }) => (
@@ -149,7 +196,7 @@ export function Editor({ project }: { project: Project }) {
             ))}
           </div>
         )}
-        {chapters.length > 0 && (
+        {!asset && chapters.length > 0 && (
           <div className="cuts">
             {chapters.map((c, i) => (
               <div key={i}><span>Chapter · <button className="when" onClick={() => seekSrc(c.t)}>{fmt(c.t)}</button> <input className="inline" value={c.title}
@@ -214,11 +261,12 @@ export function Editor({ project }: { project: Project }) {
         <div className="control"><div className="lbl"><span>Size</span></div>
           <div className="seg">{[1080, 1440, 0].map((h) => (
             <button key={h} className={config.outputHeight === h ? 'on' : ''} onClick={() => set('outputHeight', h)}>{h ? h + 'p' : 'Source'}</button>))}</div></div>
-        <button className="primary" disabled={!!busy} onClick={() => { setProg({ stage: 'bundling', progress: 0 }); window.narrate.exportProject(project.dir, config, cuts).catch(() => {}) }}>
-          {busy ? (prog!.stage === 'bundling' ? 'Preparing…' : `Rendering ${Math.round(prog!.progress * 100)}%`) : 'Export MP4'}
+        <button className="primary" disabled={!!busy || !!queue} onClick={() => { setProg({ stage: 'bundling', progress: 0 }); exportOne(asset).catch(() => {}) }}>
+          {busy ? (prog!.stage === 'bundling' ? 'Preparing…' : `Rendering ${Math.round(prog!.progress * 100)}%`) : `Export ${asset ? asset.name : 'master'} MP4`}
         </button>
+        {assets.length > 0 && <button disabled={!!busy || !!queue} onClick={exportAll}>{queue ? `Exporting ${queue.done + 1}/${queue.total}: ${queue.current}` : `Export all (${assets.length + 1})`}</button>}
         {busy && <div className="progress"><i style={{ width: `${prog!.progress * 100}%` }} /></div>}
-        {prog?.stage === 'done' && prog.output && <button onClick={() => window.narrate.reveal(prog.output!)}>{revealLabel}</button>}
+        {prog?.stage === 'done' && prog.output && !queue && <button onClick={() => window.narrate.reveal(prog.output!)}>{revealLabel}</button>}
         {prog?.stage === 'error' && <p className="err">{prog.message}</p>}
         {pauses > 0 && <p className="note">{pauses} pause{pauses > 1 ? "s" : ""} removed automatically.</p>}
         <p className="note">Not yet available: captions, narration takes, share links. They are on the roadmap, not hidden behind buttons.</p>
