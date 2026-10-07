@@ -182,3 +182,7 @@ html:has(.bar), body:has(.bar) { background: transparent; }
 .bar button { padding: 7px 14px; background: rgba(239,238,232,.14); color: var(--paper); font-size: 13px; }
 .bar button:hover { background: rgba(239,238,232,.26); }
 .bar button.stop { background: var(--coral); color: var(--ink); font-weight: 600; }
+
+/* camera preview under the camera picker: mirrored like a selfie, rounded like the overlay */
+.campreview { position: absolute; top: 100%; margin-top: 10px; left: 0; width: 160px; aspect-ratio: 4/3; object-fit: cover; border-radius: 12px; transform: scaleX(-1); background: var(--ink); }
+.field:has(.campreview) { margin-bottom: 136px; }

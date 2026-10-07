@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Devices, Permissions, Project, UnfinishedRecording } from '../../shared/types'
 import { isWin, keys, machine } from '../platform'
 
@@ -39,6 +39,24 @@ export function Home({ projects, onOpen, onChanged, lastError }: {
     const off = window.narrate.onMicLevel(setLevel)
     return () => { off(); window.narrate.stopMicMeter(); setLevel(0) }
   }, [mic, phase.kind])
+
+  // Live camera preview (spec §10) through the browser camera API, matched to the chosen device by name.
+  const previewRef = useRef<HTMLVideoElement>(null)
+  useEffect(() => {
+    if (camera === null || phase.kind !== 'idle' || !devices) return
+    let stream: MediaStream | null = null; let cancelled = false
+    const want = devices.cameras?.find((c) => c.index === camera)?.name.trim().toLowerCase()
+    ;(async () => {
+      try {
+        const all = await navigator.mediaDevices.enumerateDevices()
+        const match = all.find((d) => d.kind === 'videoinput' && want && d.label.trim().toLowerCase().startsWith(want.slice(0, 12)))
+        stream = await navigator.mediaDevices.getUserMedia({ video: match ? { deviceId: { exact: match.deviceId } } : true, audio: false })
+        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return }
+        if (previewRef.current) previewRef.current.srcObject = stream
+      } catch { /* no preview is fine; recording uses the recorder's own capture */ }
+    })()
+    return () => { cancelled = true; stream?.getTracks().forEach((t) => t.stop()); if (previewRef.current) previewRef.current.srcObject = null }
+  }, [camera, phase.kind, devices])
 
   const recover = async (u: UnfinishedRecording) => {
     setRecovering(u.dir); setError(null)
@@ -126,7 +144,8 @@ export function Home({ projects, onOpen, onChanged, lastError }: {
             <select value={camera ?? ''} onChange={(e) => setCamera(e.target.value === '' ? null : Number(e.target.value))}>
               <option value="">No camera</option>
               {devices.cameras.map((c) => <option key={c.index} value={c.index}>{c.name}</option>)}
-            </select></div>
+            </select>
+            {camera !== null && <video ref={previewRef} className="campreview" autoPlay muted playsInline />}</div>
         )}
         {isWin && (
           <div className="field"><label>Computer sound</label>
