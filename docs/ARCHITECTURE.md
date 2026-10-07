@@ -41,5 +41,8 @@ One host clock per platform, shared by media timestamps and the cursor log, so n
 
 `events.json` keeps `t0Video`, `t0Mic`, `micOffset`; media files are remuxed to start at 0 so Chromium can play them. Cursor positions are display pixels, origin top-left; `display.scale` maps points → pixels (spec §78). Cursor PNGs are stored in points on both platforms (Windows divides the physical bitmap by the monitor scale), so the renderer's `size × display.scale × cursorScale` holds everywhere.
 
+## Crash recovery (Windows; spec §61–62)
+The recorder writes `recording.json` at start and journals the cursor log and pauses to `events.partial.jsonl` every 0.5 s. Media go to Matroska, which stays readable when truncated. `events.json` is written atomically at the end and the journal removed. On launch the app lists folders that have `recording.json` but no `events.json` and offers **Restore** (runs `narrate_win.py finalize --out DIR`, which rebuilds `events.json` from the journal and remuxes the media) or **Discard** (Bin, after confirmation). ffmpeg children live in a kill-on-close job object so a dead recorder cannot leave a capture running.
+
 ## Non-destructive edits
 Pauses are stored as `pauses: [[t0,t1]]` and skipped at render time (`ranges.ts`), never cut from the media. User cuts, zoom edits and masks will follow the same pattern: instructions in the project, raw media untouched (spec §38, §60).

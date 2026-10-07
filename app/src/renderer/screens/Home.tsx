@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { Devices, Permissions, Project } from '../../shared/types'
+import type { Devices, Permissions, Project, UnfinishedRecording } from '../../shared/types'
 import { isWin, keys, machine } from '../platform'
 
 type Phase = { kind: 'idle' } | { kind: 'countdown'; n: number } | { kind: 'starting' }
@@ -14,10 +14,14 @@ export function Home({ projects, onOpen, onChanged, lastError }: {
   const [countdown, setCountdown] = useState(3)
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
   const [error, setError] = useState<string | null>(null)
+  const [unfinished, setUnfinished] = useState<UnfinishedRecording[]>([])
+  const [recovering, setRecovering] = useState<string | null>(null)   // dir being recovered
+  const [level, setLevel] = useState(0)
 
   const loadPerms = (request = false) => window.narrate.checkPermissions(request).then(setPerms)
   useEffect(() => {
     loadPerms()
+    window.narrate.listUnfinished().then(setUnfinished).catch(() => {})
     window.narrate.listDevices().then((d) => {
       setDevices(d)
       const builtIn = d.mics.find((m) => /Microphone/.test(m.name) && !/iPhone/.test(m.name)) ?? d.mics[0]
@@ -25,6 +29,28 @@ export function Home({ projects, onOpen, onChanged, lastError }: {
     }).catch((e) => setError(String(e)))
   }, [])
   useEffect(() => { if (lastError) setError(lastError) }, [lastError])
+
+  // Live input level for the selected microphone while idle on this screen (spec §14).
+  useEffect(() => {
+    if (mic === null || phase.kind !== 'idle' || !isWin) { setLevel(0); return }
+    window.narrate.startMicMeter(mic)
+    const off = window.narrate.onMicLevel(setLevel)
+    return () => { off(); window.narrate.stopMicMeter(); setLevel(0) }
+  }, [mic, phase.kind])
+
+  const recover = async (u: UnfinishedRecording) => {
+    setRecovering(u.dir); setError(null)
+    try {
+      const p = await window.narrate.recoverRecording(u.dir)
+      setUnfinished((l) => l.filter((x) => x.dir !== u.dir)); onChanged(); onOpen(p)
+    } catch (e) { setError(`This recording could not be recovered. ${(e as Error).message}`) }
+    finally { setRecovering(null) }
+  }
+  const discard = async (u: UnfinishedRecording) => {
+    if (!confirm(`Move the unfinished recording from ${fmtDate(u.startedAt)} to the Bin?`)) return
+    await window.narrate.trashProject(u.dir)
+    setUnfinished((l) => l.filter((x) => x.dir !== u.dir))
+  }
 
   const begin = async () => {
     setError(null)
@@ -58,6 +84,17 @@ export function Home({ projects, onOpen, onChanged, lastError }: {
           </div>
         </div>
       )}
+      {unfinished.map((u) => (
+        <div className="permission" key={u.dir}>
+          <b>We recovered an unsaved recording.</b>
+          <p>Started {fmtDate(u.startedAt)} · {u.display.width}×{u.display.height}{u.mic ? ` · ${u.mic}` : ''}.
+             Narrate closed before it was saved. Restore it to finish saving and open it in the editor.</p>
+          <div className="row">
+            <button className="primary" disabled={!!recovering} onClick={() => recover(u)}>{recovering === u.dir ? 'Restoring…' : 'Restore'}</button>
+            <button disabled={!!recovering} onClick={() => discard(u)}>Discard</button>
+          </div>
+        </div>
+      ))}
       {micBlocked && (
         <div className="permission">
           <b>Microphone access is turned off for desktop apps.</b>
@@ -80,7 +117,8 @@ export function Home({ projects, onOpen, onChanged, lastError }: {
             <option value="">No microphone</option>
             {devices?.mics.map((m) => <option key={m.index} value={m.index}>{m.name}</option>)}
           </select>
-          {devices && devices.mics.length === 0 && <span className="note">No microphone detected.</span>}</div>
+          {devices && devices.mics.length === 0 && <span className="note">No microphone detected.</span>}
+          {mic !== null && isWin && <div className="meter" title="Microphone level"><i style={{ width: `${Math.round(level * 100)}%` }} /></div>}</div>
         <div className="field"><label>Countdown</label>
           <select value={countdown} onChange={(e) => setCountdown(Number(e.target.value))}>
             <option value={0}>Immediate</option><option value={3}>3 seconds</option><option value={5}>5 seconds</option>
@@ -108,6 +146,7 @@ export function Home({ projects, onOpen, onChanged, lastError }: {
 }
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
+const fmtDate = (iso: string) => { const d = new Date(iso); return isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) }
 function friendly(msg: string) {
   if (/ffmpeg is not installed|Python 3/i.test(msg)) return msg
   if (/microphone/i.test(msg)) return msg

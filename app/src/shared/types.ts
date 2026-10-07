@@ -59,6 +59,7 @@ export type RecorderEvent =
   | { event: 'paused'; t: number } | { event: 'resumed'; t: number }
   | { event: 'stopped'; out: string; duration: number }
   | { event: 'finalizing'; step: 'video' | 'audio' }
+  | { event: 'recovering'; step: 'video' | 'audio' | 'done' }
   | { event: 'ready'; out: string; project: Project }
   | { event: 'error'; code: string; message: string }
 export type RecState = 'idle' | 'countdown' | 'recording' | 'paused' | 'finalizing'
@@ -69,6 +70,8 @@ export interface Devices {
   displays: { ordinal: number; id: number; width: number; height: number; name: string }[]
 }
 export interface StartOptions { screen: number; mic: number | null; fps: number }
+/** A recording folder whose recorder died before writing events.json (recording.json still present). */
+export interface UnfinishedRecording { dir: string; name: string; startedAt: string; display: DisplayInfo; mic: string | null }
 export interface ExportProgress { progress: number; stage: 'bundling' | 'rendering' | 'done' | 'error'; message?: string; output?: string }
 
 export type Platform = 'darwin' | 'win32' | 'linux'
@@ -86,6 +89,13 @@ export interface NarrateApi {
   onRecorderEvent(cb: (e: RecorderEvent) => void): () => void
   getRecState(): Promise<{ state: RecState; since: number; pausedTotal: number; startedAt: number }>
   listProjects(): Promise<Project[]>
+  /** Crash recovery (spec §62): unfinished recordings and the call that finalises one into a project. */
+  listUnfinished(): Promise<UnfinishedRecording[]>
+  recoverRecording(dir: string): Promise<Project>
+  /** Live microphone level (spec §14): 0..1 at ~10 Hz while the meter runs. */
+  startMicMeter(mic: number): Promise<void>
+  stopMicMeter(): Promise<void>
+  onMicLevel(cb: (level: number) => void): () => void
   exportProject(dir: string, config: RenderConfig): Promise<string>
   onExportProgress(cb: (p: ExportProgress) => void): () => void
   reveal(path: string): Promise<void>

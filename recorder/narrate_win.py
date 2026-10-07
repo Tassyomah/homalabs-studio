@@ -6,6 +6,11 @@ Same command line and line protocol as recorder/narrate.py (macOS), so the app d
     narrate_win.py --list                 devices (JSON)
     narrate_win.py --check [--request]    permission state (JSON); --request opens Windows' microphone privacy page
     narrate_win.py record --out DIR [--fps 60] [--screen N] [--mic N | --no-mic]
+    narrate_win.py finalize --out DIR     finish a recording whose process died (crash recovery, spec §62)
+    narrate_win.py meter [--mic N]        microphone level, one {"level": 0..1} line every 100 ms until stdin closes
+
+While recording, `recording.json` (setup) and `events.partial.jsonl` (cursor log, pauses) are appended to on disk,
+so `finalize` can rebuild `events.json` from what reached the disk if the recorder is killed.
 
 Protocol (one JSON object per line):
   stdout → {"event":"started"|"paused"|"resumed"|"stopped"|"finalizing"|"ready"|"error", ...}
@@ -263,10 +268,39 @@ def render_cursor(hcur):
         if ii.hbmMask: gdi32.DeleteObject(ii.hbmMask)
         if ii.hbmColor: gdi32.DeleteObject(ii.hbmColor)
 
+class Journal:
+    """Append-only line journal (events.partial.jsonl) so a crash loses at most the last flush interval."""
+    def __init__(self, path):
+        self.path = path; self.lock = threading.Lock(); self.buf = []
+        self.fh = open(path, "a", encoding="utf-8")
+    def add(self, kind, data):
+        with self.lock: self.buf.append(json.dumps({"k": kind, "d": data}))
+    def flush(self):
+        with self.lock:
+            if not self.buf: return
+            self.fh.write("\n".join(self.buf) + "\n"); self.buf.clear(); self.fh.flush()
+    def close(self): self.flush(); self.fh.close()
+
+def read_journal(path):
+    moves, clicks, changes, cursors, pauses = [], [], [], {}, []
+    if not os.path.exists(path): return moves, clicks, changes, cursors, pauses
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            try: e = json.loads(line)
+            except ValueError: continue          # a torn last line after a crash
+            k, d = e.get("k"), e.get("d")
+            if k == "m": moves.extend(d)
+            elif k == "c": clicks.append(d)
+            elif k == "s": changes.append(d)
+            elif k == "cur": cursors[d["id"]] = d["shape"]
+            elif k == "pause": pauses.append([d, None])
+            elif k == "resume" and pauses and pauses[-1][1] is None: pauses[-1][1] = d
+    return moves, clicks, changes, cursors, pauses
+
 class CursorLog:
     """Cursor position / buttons / shape by polling. No hooks, no extra permissions."""
-    def __init__(self, disp, outdir, hz=120):
-        self.disp = disp; self.hz = hz; self.outdir = outdir
+    def __init__(self, disp, outdir, journal, hz=120):
+        self.disp = disp; self.hz = hz; self.outdir = outdir; self.journal = journal
         os.makedirs(os.path.join(outdir, "cursors"), exist_ok=True)
         self.moves, self.clicks, self.cursorChanges, self.cursors = [], [], [], {}
         self.by_handle = {}          # hCursor → cursor id (rendered once per handle)
@@ -284,11 +318,12 @@ class CursorLog:
             with open(os.path.join(self.outdir, fn), "wb") as fh: fh.write(write_png(w, h, rgba))
             s = self.disp["scale"]   # stored in points like macOS; the renderer multiplies by display.scale
             self.cursors[cid] = {"file": fn, "hotspot": [hx / s, hy / s], "size": [w / s, h / s]}
+            self.journal.add("cur", {"id": cid, "shape": self.cursors[cid]})
         self.by_handle[hcur] = cid
         return cid
 
     def run(self):
-        period = 1.0 / self.hz; n = 0
+        period = 1.0 / self.hz; n = 0; pending = []
         ci = CURSORINFO(); ci.cbSize = ctypes.sizeof(ci)
         pt = wintypes.POINT(); ox, oy = self.disp["x"], self.disp["y"]
         while not self.stop.is_set():
@@ -296,19 +331,47 @@ class CursorLog:
             if user32.GetCursorPos(ctypes.byref(pt)):
                 x, y = pt.x - ox, pt.y - oy
                 if self.last != (x, y):
-                    self.last = (x, y); self.moves.append([round(t, 4), x, y])
+                    self.last = (x, y); m = [round(t, 4), x, y]; self.moves.append(m); pending.append(m)
             for i, vk in enumerate((0x01, 0x02)):                     # VK_LBUTTON, VK_RBUTTON
                 down = bool(user32.GetAsyncKeyState(vk) & 0x8000)
                 if down != self.buttons[i] and self.last is not None:
                     self.buttons[i] = down
-                    self.clicks.append({"t": round(t, 4), "type": "down" if down else "up",
-                                        "button": "left" if i == 0 else "right", "x": self.last[0], "y": self.last[1]})
+                    c = {"t": round(t, 4), "type": "down" if down else "up", "button": "left" if i == 0 else "right", "x": self.last[0], "y": self.last[1]}
+                    self.clicks.append(c); self.journal.add("c", c)
             if n % 6 == 0 and user32.GetCursorInfo(ctypes.byref(ci)) and ci.hCursor and ci.flags & 1:
                 cid = self.cursor_id(ci.hCursor)
                 if cid and cid != self.cur_id:
-                    self.cur_id = cid; self.cursorChanges.append([round(t, 4), cid])
+                    self.cur_id = cid; ch = [round(t, 4), cid]; self.cursorChanges.append(ch); self.journal.add("s", ch)
+            if n % 60 == 0:                                            # every 0.5 s: journal the moves and flush
+                if pending: self.journal.add("m", pending); pending = []
+                self.journal.flush()
             n += 1
             time.sleep(max(0, period - (now() - t)))
+        if pending: self.journal.add("m", pending)
+        self.journal.flush()
+
+# ---------------------------------------------------------------- mic level meter
+def meter(args):
+    """Stream the microphone level (RMS, 0..1 with a soft log curve) at 10 Hz until stdin closes."""
+    need_ffmpeg()
+    mics = dshow_audio_devices()
+    if not mics: emit(event="error", code="no_mic", message="No microphone detected."); return
+    mic = mics[args.mic] if args.mic is not None and 0 <= args.mic < len(mics) else mics[0]
+    cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-f", "dshow", "-audio_buffer_size", "50", "-i", f"audio={mic[1]}",
+           "-ac", "1", "-ar", "16000", "-f", "s16le", "-flush_packets", "1", "-"]   # flush per packet or the pipe lags ~1 s
+    p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=CREATE_NO_WINDOW)
+    JOB.assign(p)
+    threading.Thread(target=lambda: (sys.stdin.read(), kill(p)), daemon=True).start()   # app closes stdin → stop
+    import array, math
+    chunk = 1600 * 2                                                  # 100 ms of mono s16
+    while True:
+        data = p.stdout.read(chunk)
+        if len(data) < chunk: break
+        a = array.array("h", data)
+        rms = math.sqrt(sum(v * v for v in a) / len(a)) / 32768.0
+        db = 20 * math.log10(max(rms, 1e-6))
+        emit(event="level", level=round(max(0.0, min(1.0, (db + 60) / 60)), 3))   # -60 dBFS → 0, 0 dBFS → 1
+    kill(p)
 
 # ---------------------------------------------------------------- helpers
 def probe(path):
@@ -331,6 +394,33 @@ def kill(proc):
 # ---------------------------------------------------------------- capture processes
 MIC_BUFFER_MS = 50   # dshow audio_buffer_size; a packet is stamped on arrival, i.e. this long after its first sample
 
+class _JobObject:
+    """Windows job with KILL_ON_JOB_CLOSE: every ffmpeg assigned to it dies when this process dies, so a
+    recorder crash never leaves an orphan capturing the screen (spec §62/§82)."""
+    def __init__(self):
+        self.h = None
+        try:
+            k32 = ctypes.windll.kernel32
+            k32.CreateJobObjectW.restype = ctypes.c_void_p
+            h = k32.CreateJobObjectW(None, None)
+            class LIMIT(ctypes.Structure):
+                _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64), ("LimitFlags", wintypes.DWORD),
+                            ("MinimumWorkingSetSize", ctypes.c_size_t), ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                            ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD), ("SchedulingClass", wintypes.DWORD)]
+            class IO(ctypes.Structure):
+                _fields_ = [(n, ctypes.c_uint64) for n in ("ReadOperationCount", "WriteOperationCount", "OtherOperationCount", "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+            class EXT(ctypes.Structure):
+                _fields_ = [("BasicLimitInformation", LIMIT), ("IoInfo", IO), ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                            ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+            info = EXT(); info.BasicLimitInformation.LimitFlags = 0x2000          # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if h and k32.SetInformationJobObject(ctypes.c_void_p(h), 9, ctypes.byref(info), ctypes.sizeof(info)): self.h = h   # 9 = JobObjectExtendedLimitInformation
+        except Exception as e: log(f"[job] unavailable: {e}")
+    def assign(self, proc):
+        if self.h:
+            try: ctypes.windll.kernel32.AssignProcessToJobObject(ctypes.c_void_p(self.h), ctypes.c_void_p(int(proc._handle)))
+            except Exception as e: log(f"[job] assign failed: {e}")
+JOB = _JobObject()
+
 class Capture:
     """One ffmpeg process writing one stream; stdout/stderr drained, stopped with 'q'."""
     def __init__(self, name, cmd, path):
@@ -338,6 +428,7 @@ class Capture:
         log(f"[{name}] " + " ".join(cmd))
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
                                      encoding="utf-8", errors="replace", creationflags=CREATE_NO_WINDOW)
+        JOB.assign(self.proc)
         drain(self.proc.stderr, lambda l: (self.err.append(l), log(f"[{name}] {l}")))
     def alive(self): return self.proc.poll() is None
     def wait_for_data(self, seconds, min_bytes=4096):
@@ -399,9 +490,11 @@ def record(args):
             emit(event="error", code="no_mic", message="The selected microphone is no longer available. Choose another microphone."); sys.exit(3)
 
     enc, extra = pick_encoder()
-    raw_video = os.path.join(outdir, "screen.mkv"); screen_path = os.path.join(outdir, "screen.mp4")
-    mic_path = os.path.join(outdir, "mic.mka")
+    raw_video = os.path.join(outdir, "screen.mkv"); mic_path = os.path.join(outdir, "mic.mka")
     t_launch = now()
+    setup = {"version": 1, "display": disp, "fps": args.fps, "tLaunch": t_launch, "encoder": enc, "mic": mic[0] if mic else None,
+             "startedAt": datetime.now().isoformat(timespec="seconds")}
+    with open(os.path.join(outdir, "recording.json"), "w") as fh: json.dump(setup, fh)   # presence without events.json = unfinished
 
     audio = Capture("mic", audio_cmd(mic, mic_path), mic_path) if mic else None
     video = Capture("screen", video_cmd("ddagrab", d, w, h, args.fps, enc, extra, raw_video), raw_video)
@@ -414,13 +507,16 @@ def record(args):
             video.kill()
             if audio: audio.kill()
             emit(event="error", code="no_frames", message="The screen capture produced no frames.\n" + video.tail()); sys.exit(4)
+    setup["capture"] = mode
+    with open(os.path.join(outdir, "recording.json"), "w") as fh: json.dump(setup, fh)
     warning = None
     if audio and not audio.wait_for_data(4, min_bytes=1024):
         audio.kill(); audio = None
         warning = "The microphone could not be started; recording without audio.\n" + video.tail(2)
         log("[recorder] " + warning)
 
-    cl = CursorLog(d, outdir); th = threading.Thread(target=cl.run, daemon=True); th.start()
+    journal = Journal(os.path.join(outdir, "events.partial.jsonl"))
+    cl = CursorLog(d, outdir, journal); th = threading.Thread(target=cl.run, daemon=True); th.start()
     pauses = []
     emit(event="started", out=outdir, display=disp, tLaunch=t_launch, encoder=enc, capture=mode, mic=mic[0] if audio else None, warning=warning)
 
@@ -428,9 +524,9 @@ def record(args):
     def do_stop(*_): stopped.set()
     def handle(cmd):
         if cmd == "pause" and not (pauses and pauses[-1][1] is None):
-            pauses.append([round(now(), 4), None]); emit(event="paused", t=pauses[-1][0])
+            pauses.append([round(now(), 4), None]); journal.add("pause", pauses[-1][0]); journal.flush(); emit(event="paused", t=pauses[-1][0])
         elif cmd == "resume" and pauses and pauses[-1][1] is None:
-            pauses[-1][1] = round(now(), 4); emit(event="resumed", t=pauses[-1][1])
+            pauses[-1][1] = round(now(), 4); journal.add("resume", pauses[-1][1]); journal.flush(); emit(event="resumed", t=pauses[-1][1])
         elif cmd == "stop": do_stop()
     def stdin_loop():
         for line in sys.stdin:
@@ -452,36 +548,71 @@ def record(args):
         stopped.wait(0.05)
     t_end = now()
     if pauses and pauses[-1][1] is None: pauses[-1][1] = round(t_end, 4)
-    cl.stop.set(); th.join(timeout=1)
+    cl.stop.set(); th.join(timeout=1); journal.close()
     video.stop()
     if audio: audio.stop()
     emit(event="stopped", out=outdir, duration=round(t_end - t_launch, 2))
+    finalize(outdir, setup, t_end, capture=mode, log_data=(cl.moves, cl.clicks, cl.cursorChanges, cl.cursors, pauses))
 
-    # ---- finalize: media become zero-based so Chromium can play them; events.json keeps the clock origins
+def finalize(outdir, setup, t_end, capture=None, log_data=None):
+    """Turn the raw capture (screen.mkv, mic.mka, journal) into screen.mp4 / mic.wav / events.json.
+    Used at the end of a normal recording and by `finalize` after a crash (then log_data comes from the journal)."""
+    raw_video = os.path.join(outdir, "screen.mkv"); screen_path = os.path.join(outdir, "screen.mp4"); mic_path = os.path.join(outdir, "mic.mka")
+    journal_path = os.path.join(outdir, "events.partial.jsonl")
+    moves, clicks, changes, cursors, pauses = log_data if log_data else read_journal(journal_path)
+    if pauses and pauses[-1][1] is None: pauses[-1][1] = round(t_end, 4)
+
     emit(event="finalizing", step="video")
-    t0v = float(probe(raw_video).get("start_time", 0) or 0)         # wall-clock origin, before the remux resets it
-    run([FFMPEG, "-v", "error", "-y", "-i", raw_video, "-c", "copy", "-movflags", "+faststart", screen_path], timeout=600)
-    if not (os.path.exists(screen_path) and os.path.getsize(screen_path) > 0):
-        emit(event="error", code="remux_failed", message="The recording could not be finalised. The raw capture is kept as screen.mkv."); sys.exit(5)
-    os.remove(raw_video)
+    if os.path.exists(raw_video):
+        t0v = float(probe(raw_video).get("start_time", 0) or 0)     # wall-clock origin, before the remux resets it
+        setup["t0Video"] = t0v
+        with open(os.path.join(outdir, "recording.json"), "w") as fh: json.dump(setup, fh)   # survives a crash during the remux
+        run([FFMPEG, "-v", "error", "-y", "-i", raw_video, "-c", "copy", "-movflags", "+faststart", screen_path], timeout=600)
+        if not (os.path.exists(screen_path) and os.path.getsize(screen_path) > 0):
+            emit(event="error", code="remux_failed", message="The recording could not be finalised. The raw capture is kept as screen.mkv."); sys.exit(5)
+        os.remove(raw_video)
+    elif os.path.exists(screen_path): t0v = float(setup.get("t0Video", 0) or 0)   # finalize re-run after a crash during finalize
+    else:
+        emit(event="error", code="no_video", message="This recording has no video file; nothing could be recovered."); sys.exit(5)
     vid = probe(screen_path)
     t0m = None
+    wav = os.path.join(outdir, "mic.wav")
     if os.path.exists(mic_path):
         emit(event="finalizing", step="audio")
         st = probe(mic_path).get("start_time")
-        run([FFMPEG, "-v", "error", "-y", "-i", mic_path, "-c:a", "pcm_s16le", "-ar", "48000", os.path.join(outdir, "mic.wav")], timeout=600)
-        if st is not None and os.path.exists(os.path.join(outdir, "mic.wav")):
+        run([FFMPEG, "-v", "error", "-y", "-i", mic_path, "-c:a", "pcm_s16le", "-ar", "48000", wav], timeout=600)
+        if st is not None and os.path.exists(wav):
             t0m = float(st) - MIC_BUFFER_MS / 1000.0                  # packets are stamped on arrival; the first sample is one buffer older
-            os.remove(mic_path)
-    events = {"version": 2, "display": disp, "fps": args.fps, "tLaunch": t_launch, "tEnd": t_end,
+            setup["t0Mic"] = t0m; os.remove(mic_path)
+    elif os.path.exists(wav) and setup.get("t0Mic") is not None: t0m = float(setup["t0Mic"])
+    events = {"version": 2, "display": setup["display"], "fps": setup["fps"], "tLaunch": setup["tLaunch"], "tEnd": t_end,
               "t0Video": t0v, "t0Mic": t0m,
               "videoDuration": float(vid.get("duration", 0) or 0), "videoFrames": int(vid.get("nb_frames", 0) or 0),
               "micOffset": (t0m - t0v) if t0m is not None else None,
-              "pauses": pauses, "platform": "win32", "encoder": enc, "capture": mode,
-              "cursors": cl.cursors, "cursorChanges": cl.cursorChanges, "moves": cl.moves, "clicks": cl.clicks, "scrolls": [],
+              "pauses": pauses, "platform": "win32", "encoder": setup.get("encoder"), "capture": capture,
+              "recovered": log_data is None,
+              "cursors": cursors, "cursorChanges": changes, "moves": moves, "clicks": clicks, "scrolls": [],
               "files": {"screen": "screen.mp4", "mic": "mic.wav" if t0m is not None else None}}
-    with open(os.path.join(outdir, "events.json"), "w") as fh: json.dump(events, fh)
-    emit(event="ready", out=outdir, frames=events["videoFrames"], duration=events["videoDuration"], clicks=len(cl.clicks) // 2)
+    tmp = os.path.join(outdir, "events.json.tmp")
+    with open(tmp, "w") as fh: json.dump(events, fh)
+    os.replace(tmp, os.path.join(outdir, "events.json"))              # atomic: events.json is complete or absent
+    for f in (journal_path, os.path.join(outdir, "recording.json")):
+        if os.path.exists(f): os.remove(f)
+    emit(event="ready", out=outdir, frames=events["videoFrames"], duration=events["videoDuration"], clicks=len(clicks) // 2, recovered=log_data is None)
+
+def recover(args):
+    """Finalize a recording whose recorder died. The end time is the raw video's last modification."""
+    need_ffmpeg()
+    outdir = args.out
+    setup_path = os.path.join(outdir, "recording.json")
+    if not outdir or not os.path.exists(setup_path):
+        emit(event="error", code="not_recoverable", message="No unfinished recording found in that folder."); sys.exit(3)
+    with open(setup_path) as fh: setup = json.load(fh)
+    for name in ("screen.mkv", "screen.mp4"):
+        p = os.path.join(outdir, name)
+        if os.path.exists(p): t_end = os.path.getmtime(p); break
+    else: t_end = now()
+    finalize(outdir, setup, t_end, capture=setup.get("capture"))
 
 def main():
     set_dpi_aware()
@@ -493,6 +624,8 @@ def main():
     args = ap.parse_args()
     if args.list: print(json.dumps(devices_json())); return
     if args.check: print(json.dumps(check_permissions(args.request))); return
+    if args.cmd == "finalize": recover(args); return
+    if args.cmd == "meter": meter(args); return
     record(args)
 
 if __name__ == "__main__": main()

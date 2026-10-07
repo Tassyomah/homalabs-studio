@@ -18,6 +18,7 @@ export class Recorder extends EventEmitter {
   since = 0            // ms timestamp of the current state
   pausedTotal = 0      // ms spent paused in this recording
   startedAt = 0        // ms timestamp when recording began
+  currentOut = ''      // folder of the recording in progress
   constructor(private script: string) { super() }
 
   private run(args: string[]): Promise<string> {
@@ -34,6 +35,7 @@ export class Recorder extends EventEmitter {
 
   start(opts: StartOptions & { out: string }): Promise<void> {
     if (this.proc) return Promise.reject(new Error('already recording'))
+    this.currentOut = opts.out
     const args = [this.script, 'record', '--out', opts.out, '--fps', String(opts.fps), '--screen', String(opts.screen)]
     if (opts.mic === null) args.push('--no-mic'); else args.push('--mic', String(opts.mic))
     return new Promise((res, rej) => {
@@ -62,6 +64,57 @@ export class Recorder extends EventEmitter {
     })
   }
 
+  /**
+   * Finalise a recording whose recorder died (folder has recording.json but no events.json).
+   * Streams the same finalizing/ready/error events; resolves with the folder once events.json exists.
+   */
+  recover(dir: string): Promise<string> {
+    return new Promise((res, rej) => {
+      const p = spawn(PYTHON, [this.script, 'finalize', '--out', dir], SPAWN)
+      let buf = '', settled = false, err = ''
+      p.stderr.on('data', (d) => { err += d; console.log('[recover]', String(d).trim()) })
+      p.stdout.on('data', (d) => {
+        buf += d
+        const lines = buf.split('\n'); buf = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('{')) continue
+          const ev = JSON.parse(line) as RawEvent
+          this.emit('recover', ev)
+          if (ev.event === 'ready' && !settled) { settled = true; res(String(ev.out)) }
+          if (ev.event === 'error' && !settled) { settled = true; rej(new Error(String(ev.message))) }
+        }
+      })
+      p.on('error', (e) => { if (!settled) { settled = true; rej(new Error(friendlySpawnError(e))) } })
+      p.on('close', (code) => { if (!settled) { settled = true; rej(new Error(friendlyExit(err, code))) } })
+    })
+  }
+
+  /** Microphone level meter: emits 'level' (0..1) ~10×/s until stopMeter(). Only one runs at a time. */
+  private meterProc: ChildProcess | null = null
+  startMeter(mic: number) {
+    this.stopMeter()
+    const p = spawn(PYTHON, [this.script, 'meter', '--mic', String(mic)], { stdio: ['pipe', 'pipe', 'pipe'], ...SPAWN })
+    this.meterProc = p
+    let buf = ''
+    p.stdout.on('data', (d) => {
+      buf += d
+      const lines = buf.split('\n'); buf = lines.pop() ?? ''
+      for (const line of lines) {
+        if (!line.startsWith('{')) continue
+        const ev = JSON.parse(line) as RawEvent
+        if (ev.event === 'level') this.emit('level', Number(ev.level))
+      }
+    })
+    p.on('error', () => { if (this.meterProc === p) this.meterProc = null })
+    p.on('close', () => { if (this.meterProc === p) this.meterProc = null })
+  }
+  stopMeter() {
+    const p = this.meterProc; this.meterProc = null
+    if (!p) return
+    try { p.stdin?.end() } catch { /* already gone */ }
+    setTimeout(() => { if (p.exitCode === null) p.kill() }, 1500)
+  }
+
   private setState(s: RecState) { this.state = s; this.since = Date.now() }
   private track(ev: RawEvent) {
     switch (ev.event) {
@@ -76,7 +129,7 @@ export class Recorder extends EventEmitter {
   pause() { if (this.state === 'recording') this.send('pause') }
   resume() { if (this.state === 'paused') this.send('resume') }
   stop() { if (this.state === 'recording' || this.state === 'paused') this.send('stop') }
-  kill() { this.proc?.kill('SIGTERM') }
+  kill() { this.proc?.kill('SIGTERM'); this.stopMeter() }
 }
 
 const PYTHON_HELP = process.platform === 'win32'

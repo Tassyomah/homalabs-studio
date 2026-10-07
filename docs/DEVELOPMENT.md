@@ -30,7 +30,12 @@ Check the recorder without the app:
 python recorder\narrate_win.py --list        # displays and microphones
 python recorder\narrate_win.py --check       # {"screen": true, "mic": "authorized"|"denied"|"unknown"}
 python recorder\tests\smoke_win.py           # records the primary display for ~5 s into %TEMP%\narrate-smoke and validates it
+python recorder\narrate_win.py meter         # microphone level lines until you press Ctrl-C
+python recorder\narrate_win.py finalize --out <dir>   # finish a recording whose recorder died (what the app's "Restore" does)
 ```
+While recording, the folder holds `recording.json`, `events.partial.jsonl` (cursor log, flushed every 0.5 s), `screen.mkv`
+and `mic.mka`. A folder with `recording.json` but no `events.json` is an unfinished recording; the home screen offers
+Restore / Discard for each. ffmpeg children are bound to a job object, so they die with the recorder instead of recording on.
 Hardware encoders are probed in order NVENC → Quick Sync → AMF → libx264; the chosen one is written to `events.json`
 (`encoder`) along with the capture path (`capture`: `ddagrab` or `gdigrab`).
 

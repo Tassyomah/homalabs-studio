@@ -3,7 +3,7 @@ import { join, resolve, basename } from 'node:path'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import type { Devices, ExportProgress, Project, RecorderEvent, RenderConfig, StartOptions } from '../shared/types'
+import type { Devices, ExportProgress, Project, RecorderEvent, RenderConfig, StartOptions, UnfinishedRecording } from '../shared/types'
 import { Recorder } from './recorder'
 import { AssetServer } from './assetServer'
 import { exportProject } from './exporter'
@@ -71,6 +71,29 @@ function loadProject(dir: string): Project | null {
   }
 }
 
+/** Folders the recorder started but never finished (crash, force quit, power loss). */
+function listUnfinished(): UnfinishedRecording[] {
+  const out: UnfinishedRecording[] = []
+  for (const d of readdirSync(RECORDINGS)) {
+    const dir = join(RECORDINGS, d)
+    const setup = join(dir, 'recording.json')
+    if (!existsSync(setup) || existsSync(join(dir, 'events.json'))) continue
+    if (recorder.state !== 'idle' && recorder.currentOut === dir) continue   // the one being recorded right now
+    try {
+      const s = JSON.parse(readFileSync(setup, 'utf8'))
+      out.push({ dir, name: d, startedAt: s.startedAt ?? statSync(setup).mtime.toISOString(), display: s.display, mic: s.mic ?? null })
+    } catch { /* torn file: ignore */ }
+  }
+  return out.sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+}
+
+// Recovery progress is shown inline on the home screen, never as a new recording.
+recorder.on('recover', (ev: RecorderEvent) => {
+  if (ev.event === 'finalizing') broadcast({ event: 'recovering', step: ev.step })
+  else if (ev.event === 'ready') broadcast({ event: 'recovering', step: 'done' })
+})
+recorder.on('level', (level: number) => win?.webContents.send('mic:level', level))
+
 recorder.on('event', (raw: RecorderEvent) => {
   let ev = raw
   if (raw.event === 'ready') {
@@ -92,6 +115,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('permissions:check', (_e, request: boolean) => recorder.checkPermissions(request))
   ipcMain.handle('settings:open', (_e, which: 'screen' | 'mic') => shell.openExternal(SETTINGS_URL[which]))
   ipcMain.handle('recording:start', async (_e, opts: StartOptions) => {
+    recorder.stopMeter()
     const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)
     await recorder.start({ ...opts, out: join(RECORDINGS, stamp) })
     win?.hide(); showBar()
@@ -105,6 +129,15 @@ app.whenReady().then(async () => {
   ipcMain.handle('projects:list', (): Project[] =>
     readdirSync(RECORDINGS).map((d) => loadProject(join(RECORDINGS, d))).filter((p): p is Project => !!p)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt)))
+  ipcMain.handle('projects:unfinished', (): UnfinishedRecording[] => listUnfinished())
+  ipcMain.handle('projects:recover', async (_e, dir: string): Promise<Project> => {
+    if (!dir.startsWith(RECORDINGS)) throw new Error('not a recording folder')
+    await recorder.recover(dir)
+    const p = loadProject(dir); if (!p) throw new Error('The recording was finalised but could not be opened.')
+    return p
+  })
+  ipcMain.handle('mic:meter:start', (_e, mic: number) => { if (recorder.state === 'idle') recorder.startMeter(mic) })
+  ipcMain.handle('mic:meter:stop', () => recorder.stopMeter())
   ipcMain.handle('project:export', async (_e, dir: string, config: RenderConfig) => {
     const p = loadProject(dir); if (!p) throw new Error('project not found')
     const send = (prog: ExportProgress) => win?.webContents.send('export:progress', prog)

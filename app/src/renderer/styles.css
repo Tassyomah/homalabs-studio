@@ -63,6 +63,8 @@ select { padding: 9px 12px; border-radius: 10px; border: 1px solid var(--ink-10)
 .seg button.on { background: #fff; }
 .swatch { width: 18px; height: 18px; border-radius: 50%; display: inline-block; vertical-align: middle; }
 .progress { height: 6px; background: var(--ink-10); border-radius: 3px; overflow: hidden; }
+.meter { height: 4px; background: var(--ink-10); border-radius: 2px; overflow: hidden; margin-top: 2px; }
+.meter i { display: block; height: 100%; background: var(--indigo); transition: width .08s linear; }
 .progress i { display: block; height: 100%; background: var(--indigo); transition: width .2s; }
 .note { font-size: 13px; color: var(--ink-60); }
 .err { color: #b3261e; font-size: 13px; white-space: pre-wrap; }

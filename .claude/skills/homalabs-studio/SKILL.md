@@ -31,7 +31,8 @@ description: Resume building the Homalabs screen studio (working name "narrate")
 ## State as of 2026-10-06 (evening, Windows laptop)
 Working on both platforms: home (display, mic, countdown, permission notices) → record → floating control bar (pause/resume/stop, ⌘⇧P/⌘⇧S or Ctrl+Shift+P/S) → finalising states → editor with live preview (auto-zoom to click clusters, smoothed cursor, click ripple, padding, radius, 4 backgrounds, cursor size) → MP4 export (1080p/1440p/source) → Show in Finder/Explorer. Pauses removed non-destructively.
 Windows recorder verified by `smoke_win.py` on this laptop: ddagrab ≈ 52 fps at 1080p with Quick Sync, mic on the same clock (offset ≈ 0.4 s, recorded in events.json), cursor PNG correct. Encoder choice cached in `%LOCALAPPDATA%\Narrate\encoder.json`.
-Not built yet (Phase 1 remainder): camera recording + editable overlay, system audio (Windows: WASAPI loopback; macOS: ScreenCaptureKit), crash recovery UI for interrupted recordings (Windows raw files are already crash-tolerant Matroska), mic level meter, window/region capture. Then Phase 2+ per SPEC.
+Windows also has: crash recovery (journal + `finalize`; home screen shows Restore / Discard for unfinished recordings; tested by killing recorder + ffmpeg mid-recording), live mic level meter on the home screen (`meter` subcommand), ffmpeg children in a kill-on-close job object.
+Not built yet (Phase 1 remainder): camera recording + editable overlay, system audio (Windows: WASAPI loopback; macOS: ScreenCaptureKit), window/region capture. macOS lacks recovery + meter (needs the same subcommands in narrate.py / Swift). Then Phase 2+ per SPEC.
 Known limits of both interim recorders: control bar appears in the capture; no window/region; no system audio. Windows multi-monitor ddagrab index order is assumed, untested (one display here).
 
 ## On a new machine
